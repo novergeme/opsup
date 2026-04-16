@@ -1,0 +1,125 @@
+services:
+  # OpenWebUI - Main chat interface
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: opsup-openwebui
+    restart: unless-stopped
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-your-secret-key-change-this}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - RAG_ENABLED=true
+      - RAG_EMBEDDING_ENGINE=${RAG_EMBEDDING_ENGINE:-openai}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-text-embedding-ada-002}
+      - ENABLE_SUPERDOC_INTEGRATION=true
+      - SUPERDOC_API_URL=http://superdoc:8081
+    networks:
+      - opsup-network
+    depends_on:
+      - superdoc
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # SuperDoc v2 - Document rendering and editing
+  superdoc:
+    build:
+      context: ./superdoc-v2
+      dockerfile: Dockerfile
+    container_name: opsup-superdoc
+    restart: unless-stopped
+    ports:
+      - "${SUPERDOC_PORT:-8081}:8081"
+    volumes:
+      - documents:/app/documents
+      - superdoc_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DOCUMENT_STORAGE_PATH=/app/documents
+      - DISABLE_INTERNAL_LLM_PROMPT_ROUTES=${DISABLE_INTERNAL_LLM_PROMPT_ROUTES:-true}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://foundation-models.api.cloud.ru/v1}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-openai/gpt-oss-120b}
+      - ALLOWED_ORIGINS=http://localhost:${OPENWEBUI_PORT:-3000}
+    networks:
+      - opsup-network
+
+  # Ollama - Local LLM support (optional)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: opsup-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    networks:
+      - opsup-network
+
+  # MCP Server - AI agent integration
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: opsup-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8082}:8082"
+    volumes:
+      - documents:/app/documents
+    environment:
+      - DOCUMENT_SERVICE_URL=http://superdoc:8081
+      - DOCUMENT_PUBLIC_URL=http://localhost:${SUPERDOC_PORT:-8081}
+      - ALLOWED_ORIGINS=http://localhost:${OPENWEBUI_PORT:-3000}
+    networks:
+      - opsup-network
+    depends_on:
+      - superdoc
+
+  # Vector DB for RAG (ChromaDB)
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: opsup-chromadb
+    restart: unless-stopped
+    ports:
+      - "${CHROMA_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ALLOW_RESET=true
+    networks:
+      - opsup-network
+
+  # Nginx reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    container_name: opsup-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - opsup-network
+    depends_on:
+      - openwebui
+      - superdoc
+
+volumes:
+  openwebui_data:
+  superdoc_data:
+  documents:
+  ollama_data:
+  chroma_data:
+
+networks:
+  opsup-network:
+    driver: bridge

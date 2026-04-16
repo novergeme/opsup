@@ -1,0 +1,79 @@
+# OpsUp Commercial License
+
+Copyright (c) 2026 OpsUp. All rights reserved.
+
+## COMMERCIAL LICENSE AGREEMENT
+
+This software is proprietary and confidential. You may not use, copy, modify, merge, publish, distribute, sublicense, or sell copies of this software without a valid commercial license.
+
+## License Types
+
+### 1. SaaS License (Subscription)
+- **Starter Plan**: $29/month
+  - Up to 50 documents per month
+  - 1 user account
+  - Basic AI models (GPT-3.5, Claude Haiku)
+  - Email support
+
+- **Professional Plan**: $99/month
+  - Unlimited documents
+  - Up to 5 user accounts
+  - All AI models (GPT-4, Claude Sonnet/Opus)
+  - Priority support
+  - API access
+
+- **Enterprise Plan**: Custom pricing
+  - Unlimited everything
+  - White-label solution
+  - Custom integrations
+  - Dedicated support
+  - SLA guarantee
+
+### 2. Self-Hosted License (One-time)
+- **Standard**: $999 one-time
+  - Deploy on 1 server
+  - Up to 10 users
+  - 1 year updates
+  - Email support
+
+- **Professional**: $2,999 one-time
+  - Deploy on up to 5 servers
+  - Unlimited users
+  - 2 years updates
+  - Priority support
+
+- **Enterprise**: Custom pricing
+  - Unlimited deployments
+  - Source code escrow
+  - Custom development
+  - Dedicated support
+
+### 3. API Access License
+- **Pay-per-use**: $0.01 per document operation
+- **Monthly tiers** available at discounted rates
+
+## Contact for License
+
+- Email: sales@opsup.ai
+- Website: https://opsup.ai
+- GitHub: https://github.com/opsup
+
+## Restrictions
+
+Without explicit written permission, you may not:
+1. Use this software commercially without a license
+2. Modify or distribute the software
+3. Remove copyright notices
+4. Use the software in violation of applicable laws
+
+## Warranty Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+
+## Limitation of Liability
+
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.
+
+---
+
+For licensing questions, contact: legal@opsup.ai

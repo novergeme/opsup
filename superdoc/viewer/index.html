@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperDoc Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" class="superdoc-viewer">
+    <header class="viewer-header">
+      <div class="header-left">
+        <h1 id="document-title">Document Viewer</h1>
+      </div>
+      <div class="header-actions">
+        <button id="btn-edit" class="btn btn-secondary" title="Edit Document">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zm.176 1.267L2.58 11.303l-.58 2.03 2.03-.58 8.609-8.61-1.446-1.446z"/>
+          </svg>
+          Edit
+        </button>
+        <button id="btn-download" class="btn btn-primary" title="Download Document">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+          </svg>
+          Download
+        </button>
+      </div>
+    </header>
+
+    <main class="viewer-content">
+      <div id="document-container" class="document-container">
+        <div class="loading-spinner">
+          <div class="spinner"></div>
+          <p>Loading document...</p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="viewer-footer">
+      <div class="footer-info">
+        <span id="doc-info"></span>
+      </div>
+      <div class="footer-actions">
+        <button id="btn-zoom-in" class="btn btn-icon" title="Zoom In">+</button>
+        <button id="btn-zoom-out" class="btn btn-icon" title="Zoom Out">-</button>
+        <span id="zoom-level">100%</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="editor.js"></script>
+</body>
+</html>

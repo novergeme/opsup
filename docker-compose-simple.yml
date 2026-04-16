@@ -1,0 +1,48 @@
+services:
+  # SuperDoc v2 - Document editing + React frontend + Management
+  superdoc:
+    build:
+      context: ./superdoc-v2
+      dockerfile: Dockerfile
+    container_name: opsup-superdoc
+    restart: unless-stopped
+    ports:
+      - "${SUPERDOC_PORT:-8081}:8081"
+    volumes:
+      - documents:/app/documents
+    environment:
+      - NODE_ENV=production
+      - DOCUMENT_STORAGE_PATH=/app/documents
+      - DISABLE_INTERNAL_LLM_PROMPT_ROUTES=${DISABLE_INTERNAL_LLM_PROMPT_ROUTES:-true}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://foundation-models.api.cloud.ru/v1}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-openai/gpt-oss-120b}
+    networks:
+      - opsup-network
+
+  # MCP Server - AI agent integration
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: opsup-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8082}:8082"
+    volumes:
+      - documents:/app/documents
+    environment:
+      - DOCUMENT_SERVICE_URL=http://host.docker.internal:8081
+      - DOCUMENT_PUBLIC_URL=http://localhost:${SUPERDOC_PORT:-8081}
+      - ALLOWED_ORIGINS=http://localhost:${OPENWEBUI_PORT:-3000},http://host.docker.internal:${OPENWEBUI_PORT:-3000}
+    networks:
+      - opsup-network
+    depends_on:
+      - superdoc
+
+volumes:
+  documents:
+
+networks:
+  opsup-network:
+    driver: bridge

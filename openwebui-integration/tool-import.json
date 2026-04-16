@@ -1,0 +1,15 @@
+{
+  "id": "superdoc_document_editor",
+  "name": "SuperDoc Document Editor",
+  "content": "See superdoc_tool.py for full implementation",
+  "meta": {
+    "description": "File-aware OpenWebUI bridge for SuperDoc with link-only chat replies and no internal LLM calls",
+    "author": "OpsUp Team",
+    "version": "3.1.0"
+  },
+  "valves": {
+    "SUPERDOC_API_INTERNAL_URL": "http://host.docker.internal:8081",
+    "SUPERDOC_API_PUBLIC_URL": "http://localhost:8081",
+    "REQUEST_TIMEOUT_SECONDS": 120
+  }
+}
