@@ -57,43 +57,6 @@ curl -X POST http://localhost:3000/api/v1/tools/create \
 
 ---
 
-## ➕ Optional UX Upgrade: Message Action Button (Open Artifact)
-
-Add an OpenWebUI **Action Function** so each assistant message gets a button that opens
-SuperDoc preview (Artifact panel) without manually pressing the code block Preview button.
-
-### Install via UI
-
-1. Open **Workspace → Functions**
-2. Click **Create Function**
-3. Set `id`: `superdoc_artifact_launcher`
-4. Set `name`: `SuperDoc Artifact Launcher`
-5. Paste code from `openwebui-integration/superdoc_artifact_action.py`
-6. Save and enable the function
-7. In your model settings, enable this action for the model used in chat
-   (or mark it global if you want it for all models)
-
-### Install via API
-
-```bash
-API_TOKEN="your-api-token-here"
-
-curl -X POST http://localhost:3000/api/v1/functions/create \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$(jq -n \
-    --arg id 'superdoc_artifact_launcher' \
-    --arg name 'SuperDoc Artifact Launcher' \
-    --arg content "$(cat openwebui-integration/superdoc_artifact_action.py)" \
-    --arg description 'Message action button that opens SuperDoc Artifact preview' \
-    '{id:$id,name:$name,content:$content,meta:{description:$description}}')"
-```
-
-Note: this action uses the existing SuperDoc HTML preview block from the tool output and
-programmatically triggers the `Preview` button in the clicked message.
-
----
-
 ## 📋 What the Tool Does
 
 ### Available Functions:
