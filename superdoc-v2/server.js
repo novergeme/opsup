@@ -34,6 +34,7 @@ const toBoolean = (value, defaultValue = false) => {
   return /^(1|true|yes|on)$/i.test(String(value).trim());
 };
 const DISABLE_INTERNAL_LLM_PROMPT_ROUTES = toBoolean(process.env.DISABLE_INTERNAL_LLM_PROMPT_ROUTES, true);
+const MAX_APPLY_ACTIONS = 50;
 
 // Create docs dir
 await mkdir(DOCUMENTS_DIR, { recursive: true });
@@ -211,6 +212,58 @@ const buildSearchCandidates = (findText) => {
   return [...new Set([raw, n, n.replace(/ /g, '\u00a0'), raw.replace(/\u00a0/g, ' ')].filter(Boolean))];
 };
 
+const clampInt = (value, fallback, min, max) => {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+};
+
+const buildTextWindow = (text, offset, maxChars) => {
+  const source = String(text || '');
+  const totalChars = source.length;
+  const safeOffset = Math.min(Math.max(offset, 0), totalChars);
+  const safeMaxChars = Math.max(maxChars, 1);
+  const end = Math.min(totalChars, safeOffset + safeMaxChars);
+  return {
+    text: source.slice(safeOffset, end),
+    total_chars: totalChars,
+    offset: safeOffset,
+    max_chars: safeMaxChars,
+    truncated: end < totalChars,
+  };
+};
+
+const searchTextMatches = (text, query, maxResults = 20, contextChars = 200) => {
+  const source = String(text || '');
+  const normalizedText = source.replace(/\u00a0/g, ' ');
+  const normalizedQuery = String(query || '').replace(/\u00a0/g, ' ').trim();
+  if (!normalizedQuery) return [];
+
+  const haystack = normalizedText.toLowerCase();
+  const needle = normalizedQuery.toLowerCase();
+  const matches = [];
+  let fromIndex = 0;
+
+  while (matches.length < maxResults) {
+    const start = haystack.indexOf(needle, fromIndex);
+    if (start === -1) break;
+    const end = start + needle.length;
+    const snippetStart = Math.max(0, start - contextChars);
+    const snippetEnd = Math.min(source.length, end + contextChars);
+
+    matches.push({
+      index: matches.length,
+      start,
+      end,
+      snippet: source.slice(snippetStart, snippetEnd),
+    });
+
+    fromIndex = Math.max(start + 1, end);
+  }
+
+  return matches;
+};
+
 const applyHeadlessActions = async (editor, actions) => {
   const warnings = [];
   let applied = 0, units = 0;
@@ -347,8 +400,47 @@ app.get('/api/documents/:id/text', async (req, res) => {
     await access(docPath);
     const meta = await readDocumentMeta(req.params.id);
     const text = await extractText(await readFile(docPath));
-    res.json({ success: true, document: meta, text, viewerUrl: getViewerUrl(req.params.id) });
+    const offset = clampInt(req.query?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+    const maxChars = clampInt(req.query?.max_chars, Math.max(text.length, 1), 1, 2_000_000);
+    const window = buildTextWindow(text, offset, maxChars);
+
+    res.json({
+      success: true,
+      document: meta,
+      text: window.text,
+      total_chars: window.total_chars,
+      offset: window.offset,
+      max_chars: window.max_chars,
+      truncated: window.truncated,
+      viewerUrl: getViewerUrl(req.params.id),
+    });
   } catch { res.status(404).json({ error: 'Not found' }); }
+});
+
+app.post('/api/documents/:id/search-text', async (req, res) => {
+  try {
+    const query = String(req.body?.query || '').trim();
+    if (!query) return res.status(400).json({ error: 'query is required' });
+
+    const maxResults = clampInt(req.body?.max_results, 20, 1, 100);
+    const contextChars = clampInt(req.body?.context_chars, 200, 0, 5000);
+
+    const docPath = path.join(DOCUMENTS_DIR, `${req.params.id}.docx`);
+    await access(docPath);
+
+    const text = await extractText(await readFile(docPath));
+    const matches = searchTextMatches(text, query, maxResults, contextChars);
+
+    res.json({
+      success: true,
+      document_id: req.params.id,
+      total_chars: text.length,
+      matches,
+    });
+  } catch (e) {
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'Not found' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Get HTML preview
@@ -441,6 +533,68 @@ app.post('/api/documents/:id/replace-html', async (req, res) => {
       text: await extractText(updatedBuffer),
     });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/documents/:id/apply-actions', async (req, res) => {
+  try {
+    const { actions, filename, metadata } = req.body || {};
+    const strict = toBoolean(req.body?.strict, true);
+    if (!Array.isArray(actions)) {
+      return res.status(400).json({ error: 'actions must be an array' });
+    }
+    if (actions.length > MAX_APPLY_ACTIONS) {
+      return res.status(400).json({ error: `actions limit exceeded; max ${MAX_APPLY_ACTIONS}` });
+    }
+
+    const docPath = path.join(DOCUMENTS_DIR, `${req.params.id}.docx`);
+    await access(docPath);
+    const originalBuffer = await readFile(docPath);
+
+    const result = await withHeadlessEditor(originalBuffer, async (editor) => {
+      const changes = await applyHeadlessActions(editor, actions);
+      if (changes.applied <= 0) return { ...changes, updatedBuffer: null };
+      editor.commands.acceptAllTrackedChanges?.();
+      const buf = await editor.exportDocx({ isFinalDoc: true, commentsType: 'clean' });
+      return { ...changes, updatedBuffer: await toBuffer(buf) };
+    });
+
+    if (strict && result.applied <= 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'No actions applied',
+        warnings: result.warnings || [],
+      });
+    }
+
+    const finalBuffer = result.updatedBuffer || originalBuffer;
+    if (result.updatedBuffer) {
+      await writeFile(docPath, finalBuffer);
+    }
+
+    const meta = await readDocumentMeta(req.params.id);
+    if (filename) meta.filename = String(filename);
+    if (metadata && typeof metadata === 'object') {
+      meta.metadata = { ...(meta.metadata || {}), ...metadata };
+    }
+    meta.size = finalBuffer.length;
+    meta.updatedAt = new Date().toISOString();
+    await writeDocumentMeta(req.params.id, meta);
+
+    res.json({
+      success: true,
+      document: meta,
+      viewerUrl: getViewerUrl(req.params.id),
+      changes: {
+        applied: result.applied,
+        units: result.units,
+        warnings: result.warnings || [],
+      },
+      text: await extractText(finalBuffer),
+    });
+  } catch (e) {
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'Not found' });
     res.status(500).json({ error: e.message });
   }
 });

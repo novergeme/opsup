@@ -2,12 +2,13 @@
 title: SuperDoc Document Editor
 author: OpsUp Team
 author_url: https://opsup.ai
-version: 3.1.0
+version: 3.2.1
 funding_url: https://opsup.ai
 license: Commercial
 required_open_webui_version: 0.4.0
 """
 
+import json
 import os
 import re
 from typing import Awaitable, Callable, Optional
@@ -49,17 +50,6 @@ class EventEmitter:
                         "document": [name],
                         "metadata": [{"source": name, "url": url}],
                         "source": {"name": name, "url": url},
-                    },
-                }
-            )
-
-    async def replace(self, content: str):
-        if self.emit:
-            await self.emit(
-                {
-                    "type": "replace",
-                    "data": {
-                        "content": content,
                     },
                 }
             )
@@ -299,16 +289,18 @@ class Tools:
     async def get_document_text(
         self,
         document_id: str,
+        offset: int = 0,
         max_chars: int = 16000,
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Get the current extracted text of a SuperDoc document.
-        Use this before editing an existing `document_id` when you need the latest document contents.
+        Get a text window from a SuperDoc document.
+        Use this for large files to read the document in chunks before applying action-based edits.
 
         :param document_id: SuperDoc document UUID
+        :param offset: Character offset in extracted text (default 0)
         :param max_chars: Maximum text characters to return (default 16000)
-        :return: JSON with filename, viewer_url, extracted_text
+        :return: JSON with filename, viewer_url, extracted_text window and pagination info
         """
         emitter = EventEmitter(__event_emitter__)
         try:
@@ -316,11 +308,18 @@ class Tools:
                 max_chars = max(int(max_chars), 1)
             except (TypeError, ValueError):
                 max_chars = 16000
+            try:
+                offset = max(int(offset), 0)
+            except (TypeError, ValueError):
+                offset = 0
             await emitter.status("Loading document text from SuperDoc...")
-            result = self._request("GET", f"/api/documents/{document_id}/text")
+            result = self._request(
+                "GET",
+                f"/api/documents/{document_id}/text",
+                params={"offset": offset, "max_chars": max_chars},
+            )
             document = result.get("document", {})
             text = str(result.get("text", "") or "")
-            truncated = len(text) > max_chars
             viewer_url = self._viewer_url(document_id)
             await emitter.status("Document text loaded", done=True)
             return {
@@ -328,8 +327,11 @@ class Tools:
                 "document_id": document_id,
                 "filename": document.get("filename", "document.docx"),
                 "viewer_url": viewer_url,
-                "extracted_text": text[:max_chars],
-                "truncated": truncated,
+                "extracted_text": text,
+                "total_chars": int(result.get("total_chars", len(text))),
+                "offset": int(result.get("offset", offset)),
+                "max_chars": int(result.get("max_chars", max_chars)),
+                "truncated": bool(result.get("truncated", False)),
             }
         except Exception as exc:
             await emitter.status(f"Failed to load document text: {exc}", done=True)
@@ -371,6 +373,142 @@ class Tools:
             await emitter.status(f"Failed to list documents: {exc}", done=True)
             return {"success": False, "error": str(exc)}
 
+    async def search_document_text(
+        self,
+        document_id: str,
+        query: str = "",
+        search_query: str = "",
+        max_results: int = 20,
+        context_chars: int = 200,
+        __event_emitter__: Callable[[dict], Awaitable[None]] = None,
+    ) -> dict:
+        """
+        Search within the extracted text of a SuperDoc document.
+        Use this before patching large documents so edits target exact fragments.
+
+        :param document_id: SuperDoc document UUID
+        :param query: Text query to locate in the document
+        :param search_query: Backward-compatible alias for `query`
+        :param max_results: Maximum number of matches to return
+        :param context_chars: Context size around each match
+        :return: JSON with match positions and snippets
+        """
+        emitter = EventEmitter(__event_emitter__)
+        try:
+            query = str(query or search_query or "").strip()
+            if not query:
+                raise ValueError("query is required")
+            try:
+                max_results = max(int(max_results), 1)
+            except (TypeError, ValueError):
+                max_results = 20
+            try:
+                context_chars = max(int(context_chars), 0)
+            except (TypeError, ValueError):
+                context_chars = 200
+
+            await emitter.status("Searching document text in SuperDoc...")
+            result = self._request(
+                "POST",
+                f"/api/documents/{document_id}/search-text",
+                json={
+                    "query": query,
+                    "max_results": max_results,
+                    "context_chars": context_chars,
+                },
+            )
+            await emitter.status("Document text search completed", done=True)
+            return {
+                "success": True,
+                "document_id": document_id,
+                "query": query,
+                "total_chars": int(result.get("total_chars", 0)),
+                "matches": result.get("matches", []),
+                "count": len(result.get("matches", [])),
+            }
+        except Exception as exc:
+            await emitter.status(f"Failed to search document text: {exc}", done=True)
+            return {"success": False, "error": str(exc)}
+
+    async def apply_document_actions(
+        self,
+        document_id: str,
+        actions: list[dict] | str,
+        filename: str = "",
+        strict: bool = True,
+        __event_emitter__: Callable[[dict], Awaitable[None]] = None,
+    ) -> dict:
+        """
+        Apply structured action patches to an existing SuperDoc document.
+        Preferred editing path for large/complex documents:
+        `search_document_text` -> `get_document_text` (windowed) -> `apply_document_actions`.
+
+        Supported actions:
+        - {"type":"replace","find":"...","replace":"..."}
+        - {"type":"replaceAll","find":"...","replace":"..."}
+        - {"type":"insertContent","content":"<p>...</p>","position":"start|end"}
+
+        :param document_id: Existing SuperDoc document UUID
+        :param actions: List of action objects or JSON-encoded list
+        :param filename: Optional filename override
+        :param strict: If true, returns failure when zero actions are applied
+        :return: JSON with document_id, changes, viewer_url, and concise assistant reply
+        """
+        emitter = EventEmitter(__event_emitter__)
+        try:
+            parsed_actions = actions
+            if isinstance(parsed_actions, str):
+                parsed_actions = json.loads(parsed_actions)
+            if not isinstance(parsed_actions, list):
+                raise ValueError("actions must be a list or JSON-encoded list")
+            strict_value = (
+                strict
+                if isinstance(strict, bool)
+                else str(strict or "").strip().lower() not in {"", "0", "false", "no", "off"}
+            )
+
+            await emitter.status("Applying action patches in SuperDoc...")
+            result = self._request(
+                "POST",
+                f"/api/documents/{document_id}/apply-actions",
+                json={
+                    "actions": parsed_actions,
+                    **({"filename": filename} if filename else {}),
+                    "metadata": {"source": "openwebui-tool"},
+                    "strict": strict_value,
+                },
+            )
+
+            document = result.get("document", {})
+            final_filename = document.get("filename", filename or "document.docx")
+            viewer_url = self._viewer_url(document_id)
+            changes = result.get("changes", {}) or {}
+            assistant_reply = self._build_assistant_reply(
+                "Document patched in SuperDoc",
+                final_filename,
+                viewer_url,
+            )
+
+            await emitter.citation(final_filename, viewer_url)
+            await emitter.status("Action patches applied in SuperDoc", done=True)
+
+            return {
+                "success": True,
+                "document_id": document_id,
+                "filename": final_filename,
+                "viewer_url": viewer_url,
+                "changes": {
+                    "applied": int(changes.get("applied", 0)),
+                    "units": int(changes.get("units", 0)),
+                    "warnings": changes.get("warnings", []),
+                },
+                "assistant_reply": assistant_reply,
+                "message": assistant_reply,
+            }
+        except Exception as exc:
+            await emitter.status(f"Failed to apply action patches: {exc}", done=True)
+            return {"success": False, "error": str(exc)}
+
     async def create_document(
         self,
         document_html: str,
@@ -410,7 +548,6 @@ class Tools:
             )
 
             await emitter.citation(final_filename, viewer_url)
-            await emitter.replace(assistant_reply)
             await emitter.status("Document created in SuperDoc", done=True)
 
             return {
@@ -437,9 +574,10 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Update a DOCX in SuperDoc from the final edited HTML.
+        Fallback full-document rewrite for explicit "rewrite/replace entire document" requests.
         If `document_id` is empty, the tool will import the attached DOCX from the current chat first.
-        Use this only after you have already rewritten the document and have the final HTML/text to apply.
+        For normal targeted edits, use:
+        `search_document_text` -> `get_document_text` (windowed) -> `apply_document_actions`.
         Chat output must stay link-only: short status + viewer URL.
 
         :param document_html: Final edited document content as valid HTML (preferred) or plain text
@@ -481,7 +619,6 @@ class Tools:
             )
 
             await emitter.citation(final_filename, viewer_url)
-            await emitter.replace(assistant_reply)
             await emitter.status("Document updated in SuperDoc", done=True)
 
             return {
