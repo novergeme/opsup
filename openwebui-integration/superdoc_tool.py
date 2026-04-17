@@ -2,7 +2,7 @@
 title: SuperDoc Document Editor
 author: OpsUp Team
 author_url: https://opsup.ai
-version: 3.3.0
+version: 3.3.1
 funding_url: https://opsup.ai
 license: Commercial
 required_open_webui_version: 0.4.0
@@ -12,6 +12,7 @@ import html
 import json
 import os
 import re
+import time
 from typing import Awaitable, Callable, Optional
 from urllib.parse import unquote
 
@@ -52,6 +53,15 @@ class EventEmitter:
                         "metadata": [{"source": name, "url": url}],
                         "source": {"name": name, "url": url},
                     },
+                }
+            )
+
+    async def execute(self, code: str):
+        if self.emit:
+            await self.emit(
+                {
+                    "type": "execute",
+                    "data": {"code": code},
                 }
             )
 
@@ -143,15 +153,24 @@ class Tools:
             return {}
         return response.json()
 
-    def _artifact_viewer_url(self, viewer_url: str) -> str:
+    def _artifact_viewer_url(self, viewer_url: str, refresh_token: str = "") -> str:
         separator = "&" if "?" in viewer_url else "?"
-        return f"{viewer_url}{separator}artifact=1&embed=1"
+        url = f"{viewer_url}{separator}artifact=1&embed=1"
+        if refresh_token:
+            url = f"{url}&_owui_refresh={refresh_token}"
+        return url
+
+    def _artifact_refresh_token(self) -> str:
+        return str(int(time.time() * 1000))
 
     def _artifact_html_block(self, viewer_url: str) -> str:
         if not self.valves.ENABLE_ARTIFACT_EMBED:
             return ""
 
-        iframe_url = html.escape(self._artifact_viewer_url(viewer_url), quote=True)
+        iframe_url = html.escape(
+            self._artifact_viewer_url(viewer_url, refresh_token=self._artifact_refresh_token()),
+            quote=True,
+        )
         height = max(int(self.valves.ARTIFACT_IFRAME_HEIGHT_PX), 320)
         return (
             "```html\n"
@@ -159,6 +178,35 @@ class Tools:
             f'style="width:100%;height:{height}px;border:0;border-radius:10px;" loading="eager"></iframe>\n'
             "```"
         )
+
+    def _artifact_refresh_execute_code(self, viewer_url: str) -> str:
+        iframe_src = self._artifact_viewer_url(viewer_url, refresh_token=self._artifact_refresh_token())
+        iframe_html = (
+            f'<iframe src="{html.escape(iframe_src, quote=True)}" '
+            f'title="SuperDoc Viewer" '
+            f'style="width:100%;height:{max(int(self.valves.ARTIFACT_IFRAME_HEIGHT_PX), 320)}px;'
+            f'border:0;border-radius:10px;" loading="eager"></iframe>'
+        )
+        return (
+            "(() => {"
+            "  const artifactFrame = document.querySelector('iframe[title=\"Content\"]');"
+            "  if (!artifactFrame) {"
+            "    return { updated: false, reason: 'artifact_not_open' };"
+            "  }"
+            f"  const srcdoc = {json.dumps(iframe_html)};"
+            "  artifactFrame.setAttribute('srcdoc', srcdoc);"
+            "  return { updated: true, reason: 'artifact_refreshed' };"
+            "})();"
+        )
+
+    async def _refresh_open_artifact(self, emitter: EventEmitter, viewer_url: str):
+        if not self.valves.ENABLE_ARTIFACT_EMBED:
+            return
+        try:
+            await emitter.execute(self._artifact_refresh_execute_code(viewer_url))
+        except Exception:
+            # Best-effort UI refresh only; document operation itself must not fail because of this.
+            return
 
     def _build_assistant_reply(self, action: str, filename: str, viewer_url: str) -> str:
         summary = f"{action}: {filename}. [Open in SuperDoc Viewer]({viewer_url})"
@@ -542,6 +590,7 @@ class Tools:
             )
 
             await emitter.citation(final_filename, viewer_url)
+            await self._refresh_open_artifact(emitter, viewer_url)
             await emitter.status("Action patches applied in SuperDoc", done=True)
 
             return {
@@ -602,6 +651,7 @@ class Tools:
             )
 
             await emitter.citation(final_filename, viewer_url)
+            await self._refresh_open_artifact(emitter, viewer_url)
             await emitter.status("Document created in SuperDoc", done=True)
 
             return {
@@ -675,6 +725,7 @@ class Tools:
             )
 
             await emitter.citation(final_filename, viewer_url)
+            await self._refresh_open_artifact(emitter, viewer_url)
             await emitter.status("Document updated in SuperDoc", done=True)
 
             return {
