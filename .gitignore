@@ -18,8 +18,6 @@ docker-compose.override.yml
 
 # Documents (uploaded/generated)
 documents/
-superdoc/documents/
-superdoc/logs/
 mcp-server/logs/
 
 # IDE
@@ -54,9 +52,6 @@ coverage/
 tmp/
 temp/
 *.tmp
-
-# SSL certificates (if local)
-ssl/
 
 # Backup files
 *.bak

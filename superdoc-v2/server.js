@@ -1,7 +1,6 @@
 /**
  * OpsUp SuperDoc Server v2
- * Headless document editing + React frontend + Document management
- * Based on superdoc-headless + superdoc-react
+ * Headless document editing + bundled viewer frontend + document management
  */
 import express from 'express';
 import path from 'node:path';
