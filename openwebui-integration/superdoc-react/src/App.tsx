@@ -31,6 +31,27 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const DOCX_MIME =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
+const toDocxBlob = (payload: any): Blob => {
+  if (payload instanceof Blob) {
+    return payload
+  }
+  if (payload instanceof Uint8Array) {
+    const copy = new Uint8Array(payload.byteLength)
+    copy.set(payload)
+    return new Blob([copy.buffer], { type: DOCX_MIME })
+  }
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    payload.type === 'Buffer' &&
+    Array.isArray(payload.data)
+  ) {
+    const arr = Uint8Array.from(payload.data)
+    return new Blob([arr.buffer], { type: DOCX_MIME })
+  }
+  throw new Error('Некорректный формат DOCX при экспорте')
+}
+
 const normalizeWhitespace = (value: string) =>
   String(value || '')
     .replace(/\u00a0/g, ' ')
@@ -87,6 +108,20 @@ const acceptAllTrackedChanges = async (editor: any) => {
   }
   await sleep(300)
   console.log('[superdoc] acceptAllTrackedChanges() выполнена')
+  return true
+}
+
+const rejectAllTrackedChanges = async (editor: any) => {
+  if (!editor?.commands?.rejectAllTrackedChanges) {
+    console.warn('[superdoc] rejectAllTrackedChanges() недоступна')
+    return false
+  }
+  for (let i = 0; i < 3; i += 1) {
+    editor.commands.rejectAllTrackedChanges()
+    await sleep(100)
+  }
+  await sleep(300)
+  console.log('[superdoc] rejectAllTrackedChanges() выполнена')
   return true
 }
 
@@ -267,6 +302,55 @@ function App() {
   const superdocRef = useRef<SuperDocType | null>(null)
   const pendingReadOnlyRef = useRef<boolean | null>(null)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [trackDecisionBusy, setTrackDecisionBusy] = useState<'accept' | 'reject' | null>(null)
+  const [trackDecisionError, setTrackDecisionError] = useState('')
+
+  const saveFinalDocxToServer = async (editor: any) => {
+    if (!DOC_ID) return
+    const docxPayload = await editor.exportDocx({
+      isFinalDoc: true,
+      commentsType: 'clean',
+      fieldsHighlightColor: '',
+    })
+    const formData = new FormData()
+    formData.append('file', toDocxBlob(docxPayload), `${DOC_ID}.docx`)
+    const response = await fetch(`${DOCS_API_URL}/document/${DOC_ID}/save`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!response.ok) {
+      throw new Error(`Ошибка сохранения DOCX: ${response.status}`)
+    }
+  }
+
+  const handleTrackChangesDecision = async (decision: 'accept' | 'reject') => {
+    if (trackDecisionBusy) return
+
+    const editor = (superdocRef.current as any)?.activeEditor
+    if (!editor) {
+      setTrackDecisionError('Редактор не доступен')
+      return
+    }
+
+    setTrackDecisionError('')
+    setTrackDecisionBusy(decision)
+
+    try {
+      if (decision === 'accept') {
+        const accepted = await acceptAllTrackedChanges(editor)
+        if (!accepted) throw new Error('Команда принятия изменений недоступна')
+      } else {
+        const rejected = await rejectAllTrackedChanges(editor)
+        if (!rejected) throw new Error('Команда отклонения изменений недоступна')
+      }
+
+      await saveFinalDocxToServer(editor)
+    } catch (error: any) {
+      setTrackDecisionError(error?.message || 'Не удалось применить решение по правкам')
+    } finally {
+      setTrackDecisionBusy(null)
+    }
+  }
 
   useEffect(() => {
     const handleResize = () => {
@@ -478,27 +562,6 @@ function App() {
       if (!response.ok) {
         throw new Error(`Ошибка сохранения: ${response.status}`)
       }
-    }
-
-    const toDocxBlob = (payload: any): Blob => {
-      if (payload instanceof Blob) {
-        return payload
-      }
-      if (payload instanceof Uint8Array) {
-        const copy = new Uint8Array(payload.byteLength)
-        copy.set(payload)
-        return new Blob([copy.buffer], { type: DOCX_MIME })
-      }
-      if (
-        payload &&
-        typeof payload === 'object' &&
-        payload.type === 'Buffer' &&
-        Array.isArray(payload.data)
-      ) {
-        const arr = Uint8Array.from(payload.data)
-        return new Blob([arr.buffer], { type: DOCX_MIME })
-      }
-      throw new Error('Некорректный формат DOCX при экспорте')
     }
 
     const saveDocxToServer = async (docId: string, docxPayload: any) => {
@@ -844,6 +907,27 @@ function App() {
     <div className={`app-container ${isMobile ? 'mobile' : 'desktop'}`}>
       <div className="toolbar-container">
         <div id="superdoc-toolbar" className="superdoc-toolbar"></div>
+        <div className="track-actions">
+          <button
+            type="button"
+            className="track-action-btn accept"
+            disabled={trackDecisionBusy !== null}
+            onClick={() => void handleTrackChangesDecision('accept')}
+          >
+            {trackDecisionBusy === 'accept' ? 'Применение...' : 'Принять изменения'}
+          </button>
+          <button
+            type="button"
+            className="track-action-btn reject"
+            disabled={trackDecisionBusy !== null}
+            onClick={() => void handleTrackChangesDecision('reject')}
+          >
+            {trackDecisionBusy === 'reject' ? 'Отклонение...' : 'Отклонить изменения'}
+          </button>
+        </div>
+        {trackDecisionError ? (
+          <div className="track-actions-error">{trackDecisionError}</div>
+        ) : null}
       </div>
 
       <main className="editor-container">

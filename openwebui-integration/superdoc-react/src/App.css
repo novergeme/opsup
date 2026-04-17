@@ -123,6 +123,55 @@
   min-height: 44px;
 }
 
+.track-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0.75rem 0.6rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.track-action-btn {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.track-action-btn.accept {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.track-action-btn.accept:hover:not(:disabled) {
+  background: #bbf7d0;
+}
+
+.track-action-btn.reject {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.track-action-btn.reject:hover:not(:disabled) {
+  background: #fecaca;
+}
+
+.track-action-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.track-actions-error {
+  color: #b91c1c;
+  font-size: 0.78rem;
+  padding: 0 0.75rem 0.5rem;
+}
+
 /* Editor Container */
 .editor-container {
   flex: 1;
@@ -154,10 +203,8 @@
 }
 
 /* Hide mode selector from toolbar (Editing/Suggesting/Viewing) */
-#superdoc-toolbar .n-select,
-.toolbar-item--doc-mode,
-.superdoc-toolbar-group-side,
-[class*="toolbar-item--doc-mode"] {
+#superdoc-toolbar .toolbar-item--doc-mode,
+#superdoc-toolbar [class*="toolbar-item--doc-mode"] {
   display: none !important;
 }
 
@@ -198,32 +245,12 @@
   display: none !important;
 }
 
-/* Базовый цвет текста документа (чтобы redline не становился белым) */
+/* Базовый цвет текста документа */
 #superdoc-editor,
 #superdoc-editor .superdoc,
 #superdoc-editor .super-editor,
 #superdoc-editor .super-editor__element {
   color: #15141a;
-}
-
-/* Убираем красные Track Changes цвета, оставляя основной цвет текста */
-#superdoc-editor [style*="color: rgb(255, 0, 0)"],
-#superdoc-editor [style*="color: #ff0000"],
-#superdoc-editor [style*="color: #FF0000"],
-#superdoc-editor [style*="color:rgb(255, 0, 0)"],
-#superdoc-editor [style*="color:#ff0000"],
-#superdoc-editor [style*="color:#FF0000"],
-#superdoc-editor [style*="color: red"],
-#superdoc-editor [data-track-change],
-#superdoc-editor [data-track-insert],
-#superdoc-editor .track-insert,
-#superdoc-editor .track-change {
-  color: inherit !important;
-}
-
-#superdoc-editor [data-track-change-marker],
-#superdoc-editor .track-change-marker {
-  display: none !important;
 }
 
 
@@ -273,6 +300,16 @@
 
 .mobile .toolbar-container {
   padding: 0.25rem;
+}
+
+.mobile .track-actions {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0.25rem 0.45rem;
+}
+
+.mobile .track-action-btn {
+  min-height: 38px;
 }
 
 /* Responsive Toolbar */

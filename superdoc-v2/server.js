@@ -72,6 +72,11 @@ const upload = multer({
   }
 });
 
+const uploadInMemory = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
 // ============================================
 // Helpers
 // ============================================
@@ -182,9 +187,14 @@ async function renderDocument(html) {
   }
 }
 
-async function replaceDocumentContent(docxBuffer, html) {
+async function replaceDocumentContent(docxBuffer, html, options = {}) {
   const normalizedHtml = normalizeHtmlInput(html);
+  const trackChanges = Boolean(options?.trackChanges);
   return await withHeadlessEditor(docxBuffer, async (editor) => {
+    if (trackChanges) {
+      editor.commands.enableTrackChanges?.();
+    }
+
     if (typeof editor?.commands?.selectAll === 'function') {
       editor.commands.selectAll();
     } else {
@@ -195,8 +205,11 @@ async function replaceDocumentContent(docxBuffer, html) {
     const inserted = editor?.commands?.insertContent?.(normalizedHtml, { contentType: 'html' });
     if (inserted === false) throw new Error('Failed to replace document content');
 
-    editor.commands.acceptAllTrackedChanges?.();
-    const buf = await editor.exportDocx({ isFinalDoc: true, commentsType: 'clean' });
+    const buf = await editor.exportDocx(
+      trackChanges
+        ? { isFinalDoc: false, commentsType: 'external' }
+        : { isFinalDoc: true, commentsType: 'clean' }
+    );
     return await toBuffer(buf);
   });
 }
@@ -280,10 +293,16 @@ const applyHeadlessActions = async (editor, actions) => {
           const matches = editor?.commands?.search?.(c, { highlight: false }) || [];
           if (!Array.isArray(matches) || matches.length === 0) continue;
           const targets = type === 'replaceAll' ? matches : [matches[0]];
+          let replacedForCandidate = 0;
           for (const t of [...targets].sort((a, b) => (b.from || 0) - (a.from || 0))) {
             if (typeof t?.from !== 'number' || typeof t?.to !== 'number') continue;
             editor?.commands?.setTextSelection?.({ from: t.from, to: t.to });
-            if (editor?.commands?.insertContent?.(replace || '') !== false) count++;
+            if (editor?.commands?.insertContent?.(replace || '') !== false) replacedForCandidate++;
+          }
+          if (replacedForCandidate > 0) {
+            count = replacedForCandidate;
+            editor?.commands?.search?.('', { highlight: false });
+            break;
           }
         }
         editor?.commands?.search?.('', { highlight: false });
@@ -483,6 +502,32 @@ app.post('/document/:id/save-xml', express.text({ limit: '50mb' }), async (req, 
   res.json({ success: true });
 });
 
+app.post('/document/:id/save', uploadInMemory.single('file'), async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: 'Missing file payload' });
+    }
+
+    const docPath = path.join(DOCUMENTS_DIR, `${req.params.id}.docx`);
+    await access(docPath);
+    await writeFile(docPath, req.file.buffer);
+
+    const meta = await readDocumentMeta(req.params.id);
+    meta.size = req.file.buffer.length;
+    meta.updatedAt = new Date().toISOString();
+    await writeDocumentMeta(req.params.id, meta);
+
+    res.json({
+      success: true,
+      document: meta,
+      viewerUrl: getViewerUrl(req.params.id),
+    });
+  } catch (e) {
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'Not found' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Create document from provided HTML without calling an internal LLM
 app.post('/api/documents/create-from-html', async (req, res) => {
   try {
@@ -514,7 +559,9 @@ app.post('/api/documents/:id/replace-html', async (req, res) => {
     const docPath = path.join(DOCUMENTS_DIR, `${req.params.id}.docx`);
     await access(docPath);
 
-    const updatedBuffer = await replaceDocumentContent(await readFile(docPath), html);
+    const updatedBuffer = await replaceDocumentContent(await readFile(docPath), html, {
+      trackChanges: true,
+    });
     await writeFile(docPath, updatedBuffer);
 
     const meta = await readDocumentMeta(req.params.id);
@@ -553,10 +600,10 @@ app.post('/api/documents/:id/apply-actions', async (req, res) => {
     const originalBuffer = await readFile(docPath);
 
     const result = await withHeadlessEditor(originalBuffer, async (editor) => {
+      editor.commands.enableTrackChanges?.();
       const changes = await applyHeadlessActions(editor, actions);
       if (changes.applied <= 0) return { ...changes, updatedBuffer: null };
-      editor.commands.acceptAllTrackedChanges?.();
-      const buf = await editor.exportDocx({ isFinalDoc: true, commentsType: 'clean' });
+      const buf = await editor.exportDocx({ isFinalDoc: false, commentsType: 'external' });
       return { ...changes, updatedBuffer: await toBuffer(buf) };
     });
 
@@ -691,7 +738,9 @@ app.post('/api/documents/:id/edit', async (req, res) => {
     const docxBuffer = await readFile(docPath);
 
     if (html) {
-      const updatedBuffer = await replaceDocumentContent(docxBuffer, html);
+      const updatedBuffer = await replaceDocumentContent(docxBuffer, html, {
+        trackChanges: true,
+      });
       await writeFile(docPath, updatedBuffer);
 
       const meta = await readDocumentMeta(req.params.id);
@@ -740,10 +789,10 @@ Max 8 actions. Return: {"summary":"...","actions":[...]}`
 
     // Apply actions
     const result = await withHeadlessEditor(docxBuffer, async (editor) => {
+      editor.commands.enableTrackChanges?.();
       const { applied, units, warnings } = await applyHeadlessActions(editor, actions);
       if (applied === 0) throw new Error('No actions applied');
-      editor.commands.acceptAllTrackedChanges?.();
-      const buf = await editor.exportDocx({ isFinalDoc: true, commentsType: 'clean' });
+      const buf = await editor.exportDocx({ isFinalDoc: false, commentsType: 'external' });
       return { buf: await toBuffer(buf), applied, units, warnings };
     });
 
