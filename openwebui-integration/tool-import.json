@@ -3,13 +3,15 @@
   "name": "SuperDoc Document Editor",
   "content": "See superdoc_tool.py for full implementation",
   "meta": {
-    "description": "File-aware OpenWebUI bridge for SuperDoc with action-patch editing, resilient search arg aliases, and link-only chat replies",
+    "description": "File-aware OpenWebUI bridge for SuperDoc with action-patch editing, resilient search aliases, and optional Artifact iframe embed replies",
     "author": "OpsUp Team",
-    "version": "3.2.1"
+    "version": "3.3.0"
   },
   "valves": {
     "SUPERDOC_API_INTERNAL_URL": "http://host.docker.internal:8081",
     "SUPERDOC_API_PUBLIC_URL": "http://localhost:8081",
-    "REQUEST_TIMEOUT_SECONDS": 120
+    "REQUEST_TIMEOUT_SECONDS": 120,
+    "ENABLE_ARTIFACT_EMBED": true,
+    "ARTIFACT_IFRAME_HEIGHT_PX": 920
   }
 }

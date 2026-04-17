@@ -2,12 +2,13 @@
 title: SuperDoc Document Editor
 author: OpsUp Team
 author_url: https://opsup.ai
-version: 3.2.1
+version: 3.3.0
 funding_url: https://opsup.ai
 license: Commercial
 required_open_webui_version: 0.4.0
 """
 
+import html
 import json
 import os
 import re
@@ -69,24 +70,53 @@ class Tools:
             default=120,
             description="HTTP timeout for SuperDoc API requests",
         )
+        ENABLE_ARTIFACT_EMBED: bool = Field(
+            default=True,
+            description="Append HTML iframe block in assistant_reply to auto-trigger OpenWebUI Artifact",
+        )
+        ARTIFACT_IFRAME_HEIGHT_PX: int = Field(
+            default=920,
+            description="Iframe height used in Artifact embed HTML",
+        )
 
     def __init__(self):
+        defaults = self.Valves()
         self.valves = self.Valves(
             SUPERDOC_API_INTERNAL_URL=os.environ.get(
                 "SUPERDOC_API_INTERNAL_URL",
-                os.environ.get("SUPERDOC_API_URL", self.Valves().SUPERDOC_API_INTERNAL_URL),
+                os.environ.get("SUPERDOC_API_URL", defaults.SUPERDOC_API_INTERNAL_URL),
             ),
             SUPERDOC_API_PUBLIC_URL=os.environ.get(
                 "SUPERDOC_API_PUBLIC_URL",
-                os.environ.get("SUPERDOC_PUBLIC_URL", self.Valves().SUPERDOC_API_PUBLIC_URL),
+                os.environ.get("SUPERDOC_PUBLIC_URL", defaults.SUPERDOC_API_PUBLIC_URL),
             ),
             REQUEST_TIMEOUT_SECONDS=int(
                 os.environ.get(
                     "SUPERDOC_REQUEST_TIMEOUT_SECONDS",
-                    str(self.Valves().REQUEST_TIMEOUT_SECONDS),
+                    str(defaults.REQUEST_TIMEOUT_SECONDS),
                 )
             ),
+            ENABLE_ARTIFACT_EMBED=self._to_bool(
+                os.environ.get("SUPERDOC_ENABLE_ARTIFACT_EMBED"),
+                defaults.ENABLE_ARTIFACT_EMBED,
+            ),
+            ARTIFACT_IFRAME_HEIGHT_PX=max(
+                int(
+                    os.environ.get(
+                        "SUPERDOC_ARTIFACT_IFRAME_HEIGHT_PX",
+                        str(defaults.ARTIFACT_IFRAME_HEIGHT_PX),
+                    )
+                ),
+                320,
+            ),
         )
+
+    def _to_bool(self, value, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
     def _internal_url(self) -> str:
         return self.valves.SUPERDOC_API_INTERNAL_URL.rstrip("/")
@@ -113,8 +143,29 @@ class Tools:
             return {}
         return response.json()
 
+    def _artifact_viewer_url(self, viewer_url: str) -> str:
+        separator = "&" if "?" in viewer_url else "?"
+        return f"{viewer_url}{separator}artifact=1&embed=1"
+
+    def _artifact_html_block(self, viewer_url: str) -> str:
+        if not self.valves.ENABLE_ARTIFACT_EMBED:
+            return ""
+
+        iframe_url = html.escape(self._artifact_viewer_url(viewer_url), quote=True)
+        height = max(int(self.valves.ARTIFACT_IFRAME_HEIGHT_PX), 320)
+        return (
+            "```html\n"
+            f'<iframe src="{iframe_url}" title="SuperDoc Viewer" '
+            f'style="width:100%;height:{height}px;border:0;border-radius:10px;" loading="eager"></iframe>\n'
+            "```"
+        )
+
     def _build_assistant_reply(self, action: str, filename: str, viewer_url: str) -> str:
-        return f"{action}: {filename}. [Open in SuperDoc Viewer]({viewer_url})"
+        summary = f"{action}: {filename}. [Open in SuperDoc Viewer]({viewer_url})"
+        artifact_block = self._artifact_html_block(viewer_url)
+        if artifact_block:
+            return f"{summary}\n\n{artifact_block}"
+        return summary
 
     def _decode_filename(self, value: str) -> str:
         decoded = unquote(value or "")
@@ -452,7 +503,8 @@ class Tools:
         :param actions: List of action objects or JSON-encoded list
         :param filename: Optional filename override
         :param strict: If true, returns failure when zero actions are applied
-        :return: JSON with document_id, changes, viewer_url, and concise assistant reply
+        :return: JSON with document_id, changes, viewer_url, and assistant reply
+                 (summary + link, plus optional Artifact HTML iframe block when enabled)
         """
         emitter = EventEmitter(__event_emitter__)
         try:
@@ -519,11 +571,13 @@ class Tools:
         Create a new DOCX in SuperDoc from the final document HTML.
         Call this only after you have already drafted the complete document content.
         Do not pass the user's request here; pass the final HTML or text that should become the document.
-        Chat output must stay link-only: short status + viewer URL.
+        Chat output must stay concise: short status + viewer URL.
+        When Artifact embedding is enabled, assistant_reply also includes an HTML iframe code block.
 
         :param document_html: Final document content as valid HTML (preferred) or plain text
         :param filename: Output DOCX filename
-        :return: JSON with document_id, viewer_url, and `assistant_reply` for concise chat output
+        :return: JSON with document_id, viewer_url, and `assistant_reply`
+                 (summary + link, plus optional Artifact HTML iframe block)
         """
         emitter = EventEmitter(__event_emitter__)
         try:
@@ -578,13 +632,15 @@ class Tools:
         If `document_id` is empty, the tool will import the attached DOCX from the current chat first.
         For normal targeted edits, use:
         `search_document_text` -> `get_document_text` (windowed) -> `apply_document_actions`.
-        Chat output must stay link-only: short status + viewer URL.
+        Chat output must stay concise: short status + viewer URL.
+        When Artifact embedding is enabled, assistant_reply also includes an HTML iframe code block.
 
         :param document_html: Final edited document content as valid HTML (preferred) or plain text
         :param document_id: Existing SuperDoc document UUID. Leave empty to use the current attached DOCX.
         :param file_id: Optional OpenWebUI file UUID if you need a specific attachment
         :param filename: Optional filename override for the updated DOCX
-        :return: JSON with document_id, viewer_url, and `assistant_reply` for concise chat output
+        :return: JSON with document_id, viewer_url, and `assistant_reply`
+                 (summary + link, plus optional Artifact HTML iframe block)
         """
         emitter = EventEmitter(__event_emitter__)
         try:
