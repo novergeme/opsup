@@ -381,9 +381,19 @@ app.post('/api/documents/upload', upload.single('document'), async (req, res) =>
     if (!req.file) return res.status(400).json({ error: 'No file' });
     const docId = req.file.filename.replace('.docx', '');
     const requestedFilename = String(req.body?.filename || '').trim();
+    let metadata = {};
+    if (req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)) {
+      metadata = req.body.metadata;
+    } else if (typeof req.body?.metadata === 'string' && req.body.metadata.trim()) {
+      try {
+        const parsed = JSON.parse(req.body.metadata);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed;
+      } catch {}
+    }
     const meta = {
       id: docId, filename: requestedFilename || req.file.originalname, size: req.file.size,
-      mimetype: DOCX_MIME, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      mimetype: DOCX_MIME, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      ...(Object.keys(metadata).length ? { metadata } : {})
     };
     await writeFile(path.join(DOCUMENTS_DIR, `${docId}.meta.json`), JSON.stringify(meta, null, 2));
     res.status(201).json({ success: true, document: meta, viewerUrl: getViewerUrl(docId) });
@@ -398,7 +408,7 @@ app.get('/api/documents', async (req, res) => {
     for (const f of files.filter(f => f.endsWith('.meta.json'))) {
       try { docs.push(JSON.parse(await readFile(path.join(DOCUMENTS_DIR, f), 'utf-8'))); } catch {}
     }
-    docs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    docs.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
     res.json({ success: true, documents: docs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -35,6 +35,12 @@ curl -X POST http://localhost:3000/api/v1/tools/create \
 - `SUPERDOC_REQUEST_TIMEOUT_SECONDS`
 - `SUPERDOC_ENABLE_ARTIFACT_EMBED`
 - `SUPERDOC_ARTIFACT_IFRAME_HEIGHT_PX`
+- `SUPERDOC_TOOL_STATE_FILE` (optional, default `/tmp/superdoc_tool_state.json`)
+
+## Поведение по follow-up редактированию
+
+Tool сохраняет связь `chat_id -> document_id` после первого импорта/создания документа.
+Поэтому следующий промпт в том же чате может редактировать тот же DOCX без повторного прикрепления файла.
 
 ## Базовая проверка
 
