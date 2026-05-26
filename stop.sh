@@ -1,20 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# ============================================
-# OpsUp - Stop Script
-# ============================================
-
-set -e
-
-echo "🛑 Stopping OpsUp Platform..."
-
-# Determine docker compose command
-if docker compose version &> /dev/null; then
-    DOCKER_COMPOSE="docker compose"
+if docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE="docker compose"
 else
-    DOCKER_COMPOSE="docker-compose"
+  DOCKER_COMPOSE="docker-compose"
 fi
 
 $DOCKER_COMPOSE down
-
-echo "✅ Platform stopped"
+printf 'OpsUp services stopped.\n'

@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { z } = require('zod');
 const logger = require('./utils/logger');
 
 const app = express();
@@ -88,45 +87,40 @@ const tools = [
   },
   {
     name: 'edit_document',
-    description: 'Update a document with final HTML/text or fall back to legacy prompt-based editing',
+    description: 'Replace a document with final HTML/text. No internal LLM call is performed.',
     inputSchema: {
       type: 'object',
       properties: {
         docId: { type: 'string', description: 'Document ID to edit' },
-        html: { type: 'string', description: 'Final HTML or plain text to apply directly without an internal LLM call' },
-        prompt: { type: 'string', description: 'Editing instructions for AI' },
-        filename: { type: 'string', description: 'Optional output filename override' },
-        model: { type: 'string', description: 'AI model to use (optional)', default: 'gpt-4' }
+        html: { type: 'string', description: 'Final HTML or plain text to apply directly' },
+        filename: { type: 'string', description: 'Optional output filename override' }
       },
-      required: ['docId']
+      required: ['docId', 'html']
     }
   },
   {
     name: 'create_document',
-    description: 'Create a document from final HTML/text or fall back to legacy prompt-based creation',
+    description: 'Create a document from final HTML/text. No internal LLM call is performed.',
     inputSchema: {
       type: 'object',
       properties: {
-        html: { type: 'string', description: 'Final HTML or plain text to render directly without an internal LLM call' },
-        prompt: { type: 'string', description: 'Description of the document to create' },
-        template: { type: 'string', description: 'Document template (contract, car-sale, agreement, report)', default: 'default' },
+        html: { type: 'string', description: 'Final HTML or plain text to render directly' },
         fileName: { type: 'string', description: 'Output DOCX filename' },
-        model: { type: 'string', description: 'AI model to use (optional)', default: 'gpt-4' }
+        metadata: { type: 'object', description: 'Optional metadata to store with the document' }
       },
-      required: []
+      required: ['html']
     }
   },
   {
     name: 'analyze_document',
-    description: 'Analyze a document and answer questions about its content',
+    description: 'Extract text and optional search matches from a document. No internal LLM call is performed.',
     inputSchema: {
       type: 'object',
       properties: {
-        docId: { type: 'string', description: 'Document ID to analyze' },
-        query: { type: 'string', description: 'Question or analysis request' },
-        model: { type: 'string', description: 'AI model to use (optional)', default: 'gpt-4' }
+        docId: { type: 'string', description: 'Document ID to inspect' },
+        query: { type: 'string', description: 'Optional text to search for' }
       },
-      required: ['docId', 'query']
+      required: ['docId']
     }
   },
   {
@@ -269,61 +263,37 @@ async function getDocumentText({ docId }) {
   return normalizeViewerPayload(response.data);
 }
 
-async function editDocument({ docId, prompt, model, html, filename }) {
-  if (html) {
-    const response = await axios.post(
-      `${DOCUMENT_SERVICE_URL}/api/documents/${docId}/replace-html`,
-      {
-        html,
-        ...(filename ? { filename } : {})
-      },
-      { timeout: 120000 }
-    );
-    return normalizeViewerPayload(response.data);
-  }
-
-  if (!prompt) {
-    throw new Error('Either html or prompt is required');
-  }
-
+async function editDocument({ docId, html, filename }) {
+  if (!html) throw new Error('html is required; prompt-based editing is disabled');
   const response = await axios.post(
-    `${DOCUMENT_SERVICE_URL}/api/documents/${docId}/edit`,
-    { prompt, model },
-    { timeout: 120000 } // 2 minutes timeout for AI processing
-  );
-  return normalizeViewerPayload(response.data);
-}
-
-async function createDocument({ prompt, template, model, html, fileName, metadata }) {
-  if (html) {
-    const response = await axios.post(
-      `${DOCUMENT_SERVICE_URL}/api/documents/create-from-html`,
-      {
-        html,
-        ...(fileName ? { filename: fileName } : {}),
-        ...(metadata ? { metadata } : {})
-      },
-      { timeout: 120000 }
-    );
-    return normalizeViewerPayload(response.data);
-  }
-
-  if (!prompt) {
-    throw new Error('Either html or prompt is required');
-  }
-
-  const response = await axios.post(
-    `${DOCUMENT_SERVICE_URL}/api/documents/create`,
-    { prompt, template, model },
+    `${DOCUMENT_SERVICE_URL}/api/documents/${docId}/replace-html`,
+    {
+      html,
+      ...(filename ? { filename } : {})
+    },
     { timeout: 120000 }
   );
   return normalizeViewerPayload(response.data);
 }
 
-async function analyzeDocument({ docId, query, model }) {
+async function createDocument({ html, fileName, metadata }) {
+  if (!html) throw new Error('html is required; prompt-based creation is disabled');
+  const response = await axios.post(
+    `${DOCUMENT_SERVICE_URL}/api/documents/create-from-html`,
+    {
+      html,
+      ...(fileName ? { filename: fileName } : {}),
+      ...(metadata ? { metadata } : {})
+    },
+    { timeout: 120000 }
+  );
+  return normalizeViewerPayload(response.data);
+}
+
+async function analyzeDocument({ docId, query }) {
   const response = await axios.post(
     `${DOCUMENT_SERVICE_URL}/api/documents/${docId}/analyze`,
-    { query, model },
+    { query },
     { timeout: 120000 }
   );
   return response.data;

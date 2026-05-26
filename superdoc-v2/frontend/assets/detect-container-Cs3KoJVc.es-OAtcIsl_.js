@@ -1,0 +1,1 @@
+var f=[80,75,3,4],i=[208,207,17,224,161,177,26,225];function t(n,r){if(n.length<r.length)return!1;for(let e=0;e<r.length;e++)if(n[e]!==r[e])return!1;return!0}function u(n){const r=n instanceof Uint8Array?n:new Uint8Array(n);return t(r,f)?"zip":t(r,i)?"cfb":"unknown"}export{u as detectContainerType};

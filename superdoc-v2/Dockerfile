@@ -1,14 +1,22 @@
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend-src
+COPY frontend-src/package*.json ./
+RUN npm ci
+COPY frontend-src ./
+RUN npm run build
+
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install native deps for jsdom
 RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci --omit=dev
 
 COPY . .
+COPY --from=frontend-builder /app/frontend ./frontend
 
 RUN mkdir -p /app/documents
 

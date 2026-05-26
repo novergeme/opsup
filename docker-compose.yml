@@ -12,8 +12,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - ENABLE_SUPERDOC_INTEGRATION=true
       - SUPERDOC_API_URL=http://superdoc:8081
+      - SUPERDOC_API_PUBLIC_URL=http://localhost:${SUPERDOC_PORT:-8081}
+      - SUPERDOC_ENABLE_ARTIFACT_EMBED=true
     depends_on:
       - superdoc
     extra_hosts:
@@ -34,11 +35,8 @@ services:
     environment:
       - NODE_ENV=production
       - DOCUMENT_STORAGE_PATH=/app/documents
-      - DISABLE_INTERNAL_LLM_PROMPT_ROUTES=${DISABLE_INTERNAL_LLM_PROMPT_ROUTES:-true}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://foundation-models.api.cloud.ru/v1}
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-openai/gpt-oss-120b}
-      - ALLOWED_ORIGINS=http://localhost:${OPENWEBUI_PORT:-3000}
+      - SUPERDOC_MAX_APPLY_ACTIONS=${SUPERDOC_MAX_APPLY_ACTIONS:-50}
+      - SUPERDOC_MAX_DOCUMENTS_PER_CHAT=${SUPERDOC_MAX_DOCUMENTS_PER_CHAT:-100}
     networks:
       - opsup-network
 
@@ -50,12 +48,9 @@ services:
     restart: unless-stopped
     ports:
       - "${MCP_PORT:-8082}:8082"
-    volumes:
-      - documents:/app/documents
     environment:
       - DOCUMENT_SERVICE_URL=http://superdoc:8081
       - DOCUMENT_PUBLIC_URL=http://localhost:${SUPERDOC_PORT:-8081}
-      - ALLOWED_ORIGINS=http://localhost:${OPENWEBUI_PORT:-3000}
     depends_on:
       - superdoc
     networks:

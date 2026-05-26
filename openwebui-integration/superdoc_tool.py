@@ -1,10 +1,10 @@
 """
 title: SuperDoc Document Editor
 author: OpsUp Team
-author_url: https://opsup.ai
-version: 3.3.2
-funding_url: https://opsup.ai
-license: Commercial
+author_url: https://github.com/novergeme/opsup
+version: 4.0.0-alpha.1
+funding_url: https://github.com/novergeme/opsup
+license: AGPL-3.0
 required_open_webui_version: 0.4.0
 """
 
@@ -34,15 +34,7 @@ class EventEmitter:
 
     async def status(self, description: str, done: bool = False):
         if self.emit:
-            await self.emit(
-                {
-                    "type": "status",
-                    "data": {
-                        "description": description,
-                        "done": done,
-                    },
-                }
-            )
+            await self.emit({"type": "status", "data": {"description": description, "done": done}})
 
     async def citation(self, name: str, url: str):
         if self.emit:
@@ -59,12 +51,7 @@ class EventEmitter:
 
     async def execute(self, code: str):
         if self.emit:
-            await self.emit(
-                {
-                    "type": "execute",
-                    "data": {"code": code},
-                }
-            )
+            await self.emit({"type": "execute", "data": {"code": code}})
 
 
 class Tools:
@@ -75,7 +62,7 @@ class Tools:
         )
         SUPERDOC_API_PUBLIC_URL: str = Field(
             default="http://localhost:8081",
-            description="Public SuperDoc URL shown to the user in links",
+            description="Public SuperDoc URL used in links and Artifact iframes",
         )
         REQUEST_TIMEOUT_SECONDS: int = Field(
             default=120,
@@ -83,7 +70,7 @@ class Tools:
         )
         ENABLE_ARTIFACT_EMBED: bool = Field(
             default=True,
-            description="Append HTML iframe block in assistant_reply to auto-trigger OpenWebUI Artifact",
+            description="Return an HTML iframe block so OpenWebUI can open the SuperDoc Artifact",
         )
         ARTIFACT_IFRAME_HEIGHT_PX: int = Field(
             default=920,
@@ -102,22 +89,13 @@ class Tools:
                 os.environ.get("SUPERDOC_PUBLIC_URL", defaults.SUPERDOC_API_PUBLIC_URL),
             ),
             REQUEST_TIMEOUT_SECONDS=int(
-                os.environ.get(
-                    "SUPERDOC_REQUEST_TIMEOUT_SECONDS",
-                    str(defaults.REQUEST_TIMEOUT_SECONDS),
-                )
+                os.environ.get("SUPERDOC_REQUEST_TIMEOUT_SECONDS", str(defaults.REQUEST_TIMEOUT_SECONDS))
             ),
             ENABLE_ARTIFACT_EMBED=self._to_bool(
-                os.environ.get("SUPERDOC_ENABLE_ARTIFACT_EMBED"),
-                defaults.ENABLE_ARTIFACT_EMBED,
+                os.environ.get("SUPERDOC_ENABLE_ARTIFACT_EMBED"), defaults.ENABLE_ARTIFACT_EMBED
             ),
             ARTIFACT_IFRAME_HEIGHT_PX=max(
-                int(
-                    os.environ.get(
-                        "SUPERDOC_ARTIFACT_IFRAME_HEIGHT_PX",
-                        str(defaults.ARTIFACT_IFRAME_HEIGHT_PX),
-                    )
-                ),
+                int(os.environ.get("SUPERDOC_ARTIFACT_IFRAME_HEIGHT_PX", str(defaults.ARTIFACT_IFRAME_HEIGHT_PX))),
                 320,
             ),
         )
@@ -135,13 +113,6 @@ class Tools:
     def _public_url(self) -> str:
         return self.valves.SUPERDOC_API_PUBLIC_URL.rstrip("/")
 
-    def _viewer_url(self, document_id: str) -> str:
-        public_url = self._public_url()
-        return (
-            f"{public_url}/viewer/index.html?docId={document_id}"
-            f"&api_url={public_url}&docs_api_url={public_url}"
-        )
-
     def _request(self, method: str, path: str, **kwargs):
         response = requests.request(
             method,
@@ -154,15 +125,19 @@ class Tools:
             return {}
         return response.json()
 
+    def _viewer_url(self, document_id: str) -> str:
+        public_url = self._public_url()
+        return f"{public_url}/viewer/index.html?docId={document_id}&api_url={public_url}&docs_api_url={public_url}"
+
+    def _artifact_refresh_token(self) -> str:
+        return str(int(time.time() * 1000))
+
     def _artifact_viewer_url(self, viewer_url: str, refresh_token: str = "") -> str:
         separator = "&" if "?" in viewer_url else "?"
         url = f"{viewer_url}{separator}artifact=1&embed=1"
         if refresh_token:
             url = f"{url}&_owui_refresh={refresh_token}"
         return url
-
-    def _artifact_refresh_token(self) -> str:
-        return str(int(time.time() * 1000))
 
     def _artifact_html_block(self, viewer_url: str) -> str:
         if not self.valves.ENABLE_ARTIFACT_EMBED:
@@ -176,27 +151,30 @@ class Tools:
         return (
             "```html\n"
             f'<iframe src="{iframe_url}" title="SuperDoc Viewer" '
-            f'style="width:100%;height:{height}px;border:0;border-radius:10px;" loading="eager"></iframe>\n'
+            f'style="width:100%;height:{height}px;border:0;border-radius:12px;background:#fff;" '
+            'loading="eager"></iframe>\n'
             "```"
         )
+
+    def _build_assistant_reply(self, action: str, filename: str, viewer_url: str) -> str:
+        summary = f"{action}: {filename}. [Open in SuperDoc Viewer]({viewer_url})"
+        artifact_block = self._artifact_html_block(viewer_url)
+        return f"{summary}\n\n{artifact_block}" if artifact_block else summary
 
     def _artifact_refresh_execute_code(self, viewer_url: str) -> str:
         iframe_src = self._artifact_viewer_url(viewer_url, refresh_token=self._artifact_refresh_token())
         iframe_html = (
-            f'<iframe src="{html.escape(iframe_src, quote=True)}" '
-            f'title="SuperDoc Viewer" '
+            f'<iframe src="{html.escape(iframe_src, quote=True)}" title="SuperDoc Viewer" '
             f'style="width:100%;height:{max(int(self.valves.ARTIFACT_IFRAME_HEIGHT_PX), 320)}px;'
-            f'border:0;border-radius:10px;" loading="eager"></iframe>'
+            'border:0;border-radius:12px;background:#fff;" loading="eager"></iframe>'
         )
         return (
             "(() => {"
-            "  const artifactFrame = document.querySelector('iframe[title=\"Content\"]');"
-            "  if (!artifactFrame) {"
-            "    return { updated: false, reason: 'artifact_not_open' };"
-            "  }"
-            f"  const srcdoc = {json.dumps(iframe_html)};"
-            "  artifactFrame.setAttribute('srcdoc', srcdoc);"
-            "  return { updated: true, reason: 'artifact_refreshed' };"
+            " const frames = Array.from(document.querySelectorAll('iframe'));"
+            " const artifactFrame = frames.find((frame) => frame.title === 'Content' || frame.title === 'Artifact' || frame.srcdoc);"
+            " if (!artifactFrame) return { updated: false, reason: 'artifact_not_open' };"
+            f" artifactFrame.setAttribute('srcdoc', {json.dumps(iframe_html)});"
+            " return { updated: true, reason: 'artifact_refreshed' };"
             "})();"
         )
 
@@ -206,39 +184,28 @@ class Tools:
         try:
             await emitter.execute(self._artifact_refresh_execute_code(viewer_url))
         except Exception:
-            # Best-effort UI refresh only; document operation itself must not fail because of this.
             return
-
-    def _build_assistant_reply(self, action: str, filename: str, viewer_url: str) -> str:
-        summary = f"{action}: {filename}. [Open in SuperDoc Viewer]({viewer_url})"
-        artifact_block = self._artifact_html_block(viewer_url)
-        if artifact_block:
-            return f"{summary}\n\n{artifact_block}"
-        return summary
 
     def _state_file_path(self) -> str:
         return os.environ.get("SUPERDOC_TOOL_STATE_FILE", "/tmp/superdoc_tool_state.json")
 
     def _load_state(self) -> dict:
         default_state = {"by_chat": {}, "by_file": {}}
-        path = self._state_file_path()
         try:
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(self._state_file_path(), "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
             if not isinstance(payload, dict):
                 return default_state
-            by_chat = payload.get("by_chat", {})
-            by_file = payload.get("by_file", {})
             return {
-                "by_chat": by_chat if isinstance(by_chat, dict) else {},
-                "by_file": by_file if isinstance(by_file, dict) else {},
+                "by_chat": payload.get("by_chat", {}) if isinstance(payload.get("by_chat"), dict) else {},
+                "by_file": payload.get("by_file", {}) if isinstance(payload.get("by_file"), dict) else {},
             }
         except Exception:
             return default_state
 
     def _save_state(self, state: dict):
-        path = self._state_file_path()
         try:
+            path = self._state_file_path()
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
@@ -247,7 +214,6 @@ class Tools:
                 json.dump(state, handle, ensure_ascii=False)
             os.replace(temp_path, path)
         except Exception:
-            # State cache is best-effort only.
             return
 
     def _is_document_id(self, value: str) -> bool:
@@ -265,204 +231,19 @@ class Tools:
                     return self._normalize_file_ids(json.loads(stripped))
                 except Exception:
                     return [stripped] if FILE_ID_PATTERN.fullmatch(stripped) else []
-            return [stripped] if FILE_ID_PATTERN.fullmatch(stripped) else []
-        if isinstance(value, (list, tuple, set)):
-            normalized: list[str] = []
-            seen = set()
-            for item in value:
-                candidate = str(item or "").strip()
-                if candidate and FILE_ID_PATTERN.fullmatch(candidate) and candidate not in seen:
-                    normalized.append(candidate)
-                    seen.add(candidate)
-            return normalized
-        return []
+            items = [item.strip() for item in stripped.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            items = [str(item or "").strip() for item in value]
+        else:
+            return []
 
-    def _candidate_file_ids(
-        self,
-        file_id: str = "",
-        __files__=None,
-        __chat_id__: Optional[str] = None,
-        __message_id__: Optional[str] = None,
-    ) -> list[str]:
-        candidates: list[str] = []
-        if file_id:
-            candidates.append(file_id)
-        candidates.extend(self._extract_file_ids(__files__ or []))
-        candidates.extend(self._chat_file_ids(__chat_id__, __message_id__))
-        if __chat_id__:
-            candidates.extend(self._chat_file_ids(__chat_id__, None))
-
-        ordered: list[str] = []
+        result: list[str] = []
         seen = set()
-        for item in candidates:
-            candidate = str(item or "").strip()
-            if not candidate or candidate in seen:
-                continue
-            if FILE_ID_PATTERN.fullmatch(candidate):
-                ordered.append(candidate)
-                seen.add(candidate)
-        return ordered
-
-    def _operation_file_ids(self, file_id: str = "", __files__=None) -> list[str]:
-        candidates: list[str] = []
-        if file_id:
-            candidates.append(file_id)
-        candidates.extend(self._extract_file_ids(__files__ or []))
-
-        ordered: list[str] = []
-        seen = set()
-        for item in candidates:
-            candidate = str(item or "").strip()
-            if not candidate or candidate in seen:
-                continue
-            if FILE_ID_PATTERN.fullmatch(candidate):
-                ordered.append(candidate)
-                seen.add(candidate)
-        return ordered
-
-    def _remember_document_binding(
-        self,
-        document_id: str,
-        __chat_id__: Optional[str] = None,
-        file_ids: Optional[list[str]] = None,
-    ):
-        if not self._is_document_id(document_id):
-            return
-
-        state = self._load_state()
-        timestamp = int(time.time())
-        if __chat_id__:
-            state["by_chat"][str(__chat_id__)] = {"document_id": document_id, "updated_at": timestamp}
-        for item in file_ids or []:
-            candidate = str(item or "").strip()
-            if candidate and FILE_ID_PATTERN.fullmatch(candidate):
-                state["by_file"][candidate] = {"document_id": document_id, "updated_at": timestamp}
-        self._save_state(state)
-
-    def _context_metadata(
-        self,
-        __chat_id__: Optional[str] = None,
-        __message_id__: Optional[str] = None,
-        file_ids: Optional[list[str]] = None,
-    ) -> dict:
-        metadata: dict = {"source": "openwebui-tool"}
-        if __chat_id__:
-            metadata["openwebui_chat_id"] = __chat_id__
-        if __message_id__:
-            metadata["openwebui_message_id"] = __message_id__
-        normalized_file_ids = self._normalize_file_ids(file_ids or [])
-        if normalized_file_ids:
-            metadata["openwebui_file_id"] = normalized_file_ids[0]
-            metadata["openwebui_file_ids"] = normalized_file_ids
-        return metadata
-
-    def _document_metadata(self, document: dict) -> dict:
-        metadata = {}
-        embedded = (document or {}).get("metadata", {})
-        if isinstance(embedded, dict):
-            metadata.update(embedded)
-        for key in (
-            "source",
-            "openwebui_chat_id",
-            "openwebui_message_id",
-            "openwebui_file_id",
-            "openwebui_file_ids",
-        ):
-            value = (document or {}).get(key)
-            if value is not None and key not in metadata:
-                metadata[key] = value
-        return metadata
-
-    def _find_document_by_context(
-        self,
-        __chat_id__: Optional[str] = None,
-        file_ids: Optional[list[str]] = None,
-    ) -> str:
-        try:
-            result = self._request("GET", "/api/documents")
-            documents = result.get("documents", [])
-        except Exception:
-            return ""
-
-        normalized_file_ids = set(self._normalize_file_ids(file_ids or []))
-        best_document_id = ""
-        best_score = -1
-        best_timestamp = ""
-
-        for document in documents:
-            document_id = str((document or {}).get("id", "")).strip()
-            if not self._is_document_id(document_id):
-                continue
-
-            metadata = self._document_metadata(document or {})
-            source = str(metadata.get("source", "") or "").strip().lower()
-            if source and source != "openwebui-tool":
-                continue
-
-            score = 0
-            metadata_chat_id = str(metadata.get("openwebui_chat_id", "") or "").strip()
-            if __chat_id__ and metadata_chat_id == __chat_id__:
-                score = max(score, 2)
-
-            metadata_file_ids = set(self._normalize_file_ids(metadata.get("openwebui_file_ids")))
-            metadata_file_id = str(metadata.get("openwebui_file_id", "") or "").strip()
-            if metadata_file_id and FILE_ID_PATTERN.fullmatch(metadata_file_id):
-                metadata_file_ids.add(metadata_file_id)
-            if normalized_file_ids and metadata_file_ids.intersection(normalized_file_ids):
-                score = max(score, 3)
-
-            if score <= 0:
-                continue
-
-            timestamp = str((document or {}).get("updatedAt") or (document or {}).get("createdAt") or "")
-            if score > best_score or (score == best_score and timestamp > best_timestamp):
-                best_document_id = document_id
-                best_score = score
-                best_timestamp = timestamp
-
-        return best_document_id
-
-    def _resolve_document_id(
-        self,
-        document_id: str = "",
-        file_id: str = "",
-        __files__=None,
-        __chat_id__: Optional[str] = None,
-        __message_id__: Optional[str] = None,
-    ) -> str:
-        explicit = str(document_id or "").strip()
-        if self._is_document_id(explicit):
-            return explicit
-
-        candidate_file_ids = self._candidate_file_ids(file_id, __files__, __chat_id__, __message_id__)
-        state = self._load_state()
-        by_file = state.get("by_file", {}) if isinstance(state, dict) else {}
-        by_chat = state.get("by_chat", {}) if isinstance(state, dict) else {}
-
-        for candidate in candidate_file_ids:
-            entry = by_file.get(candidate, {})
-            cached_document_id = str((entry or {}).get("document_id", "")).strip()
-            if self._is_document_id(cached_document_id):
-                return cached_document_id
-
-        if __chat_id__:
-            entry = by_chat.get(str(__chat_id__), {})
-            cached_document_id = str((entry or {}).get("document_id", "")).strip()
-            if self._is_document_id(cached_document_id):
-                return cached_document_id
-
-        resolved_document_id = self._find_document_by_context(__chat_id__, candidate_file_ids)
-        if resolved_document_id:
-            self._remember_document_binding(resolved_document_id, __chat_id__, candidate_file_ids)
-        return resolved_document_id
-
-    def _decode_filename(self, value: str) -> str:
-        decoded = unquote(value or "")
-        return decoded if decoded else value
-
-    def _preferred_filename(self, file_model) -> str:
-        meta = getattr(file_model, "meta", {}) or {}
-        return self._decode_filename(meta.get("name") or getattr(file_model, "filename", "document.docx"))
+        for item in items:
+            if item and FILE_ID_PATTERN.fullmatch(item) and item not in seen:
+                result.append(item)
+                seen.add(item)
+        return result
 
     def _extract_file_ids(self, value) -> list[str]:
         found: list[str] = []
@@ -490,19 +271,11 @@ class Tools:
                     visit(item)
 
         visit(value)
-
-        ordered: list[str] = []
-        seen = set()
-        for item in found:
-            if item not in seen:
-                ordered.append(item)
-                seen.add(item)
-        return ordered
+        return self._normalize_file_ids(found)
 
     def _chat_file_ids(self, chat_id: Optional[str], message_id: Optional[str]) -> list[str]:
         if not chat_id:
             return []
-
         try:
             from open_webui.internal.db import get_db_context
             from open_webui.models.chats import ChatFile
@@ -512,9 +285,227 @@ class Tools:
                 if message_id:
                     query = query.filter_by(message_id=message_id)
                 chat_files = query.order_by(ChatFile.created_at.desc()).all()
-                return [item.file_id for item in chat_files if item.file_id]
+                return self._normalize_file_ids([item.file_id for item in chat_files if item.file_id])
         except Exception:
             return []
+
+    def _direct_file_ids(
+        self,
+        file_id: str = "",
+        __files__=None,
+        __chat_id__: Optional[str] = None,
+        __message_id__: Optional[str] = None,
+    ) -> list[str]:
+        candidates: list[str] = []
+        if file_id:
+            candidates.append(file_id)
+        candidates.extend(self._extract_file_ids(__files__ or []))
+        candidates.extend(self._chat_file_ids(__chat_id__, __message_id__))
+        return self._normalize_file_ids(candidates)
+
+    def _candidate_file_ids(
+        self,
+        file_id: str = "",
+        __files__=None,
+        __chat_id__: Optional[str] = None,
+        __message_id__: Optional[str] = None,
+        include_chat_history: bool = True,
+    ) -> list[str]:
+        candidates = self._direct_file_ids(file_id, __files__, __chat_id__, __message_id__)
+        if include_chat_history and __chat_id__:
+            candidates.extend(self._chat_file_ids(__chat_id__, None))
+        return self._normalize_file_ids(candidates)
+
+    def _context_metadata(
+        self,
+        __chat_id__: Optional[str] = None,
+        __message_id__: Optional[str] = None,
+        file_ids: Optional[list[str]] = None,
+    ) -> dict:
+        metadata: dict = {"source": "openwebui-tool"}
+        if __chat_id__:
+            metadata["openwebui_chat_id"] = str(__chat_id__)
+        if __message_id__:
+            metadata["openwebui_message_id"] = str(__message_id__)
+        normalized_file_ids = self._normalize_file_ids(file_ids or [])
+        if normalized_file_ids:
+            metadata["openwebui_file_id"] = normalized_file_ids[0]
+            metadata["openwebui_file_ids"] = normalized_file_ids
+        return metadata
+
+    def _document_metadata(self, document: dict) -> dict:
+        metadata = {}
+        embedded = (document or {}).get("metadata", {})
+        if isinstance(embedded, dict):
+            metadata.update(embedded)
+        return metadata
+
+    def _resolve_context(
+        self,
+        document_id: str = "",
+        chat_id: Optional[str] = None,
+        file_ids: Optional[list[str]] = None,
+        allow_chat_fallback: bool = True,
+    ) -> str:
+        params = {
+            "allow_chat_fallback": "true" if allow_chat_fallback else "false",
+        }
+        if document_id:
+            params["document_id"] = document_id
+        if chat_id:
+            params["chat_id"] = chat_id
+        normalized_file_ids = self._normalize_file_ids(file_ids or [])
+        if normalized_file_ids:
+            params["file_ids"] = ",".join(normalized_file_ids)
+
+        try:
+            result = self._request("GET", "/api/context/resolve", params=params)
+            resolved = str(result.get("document_id", "") or "").strip()
+            return resolved if self._is_document_id(resolved) else ""
+        except Exception:
+            return ""
+
+    def _bind_context(
+        self,
+        document_id: str,
+        __chat_id__: Optional[str] = None,
+        __message_id__: Optional[str] = None,
+        file_ids: Optional[list[str]] = None,
+    ):
+        if not self._is_document_id(document_id):
+            return
+
+        normalized_file_ids = self._normalize_file_ids(file_ids or [])
+        try:
+            self._request(
+                "POST",
+                "/api/context/bind",
+                json={
+                    "document_id": document_id,
+                    "chat_id": __chat_id__ or "",
+                    "message_id": __message_id__ or "",
+                    "file_ids": normalized_file_ids,
+                    "source": "openwebui-tool",
+                },
+            )
+        except Exception:
+            pass
+
+        state = self._load_state()
+        timestamp = int(time.time())
+        if __chat_id__:
+            state["by_chat"][str(__chat_id__)] = {"document_id": document_id, "updated_at": timestamp}
+        for file_id in normalized_file_ids:
+            state["by_file"][file_id] = {"document_id": document_id, "updated_at": timestamp}
+        self._save_state(state)
+
+    def _find_document_by_metadata(
+        self,
+        chat_id: Optional[str] = None,
+        file_ids: Optional[list[str]] = None,
+        require_file_match: bool = False,
+    ) -> str:
+        try:
+            result = self._request("GET", "/api/documents", params={"limit": 200})
+            documents = result.get("documents", [])
+        except Exception:
+            return ""
+
+        normalized_file_ids = set(self._normalize_file_ids(file_ids or []))
+        best_document_id = ""
+        best_score = -1
+        best_timestamp = ""
+
+        for document in documents:
+            document_id = str((document or {}).get("id", "") or "").strip()
+            if not self._is_document_id(document_id):
+                continue
+            metadata = self._document_metadata(document or {})
+            document_file_ids = set(self._normalize_file_ids(metadata.get("openwebui_file_ids")))
+            single_file_id = str(metadata.get("openwebui_file_id", "") or "").strip()
+            if FILE_ID_PATTERN.fullmatch(single_file_id):
+                document_file_ids.add(single_file_id)
+
+            file_match = bool(normalized_file_ids and document_file_ids.intersection(normalized_file_ids))
+            chat_match = bool(chat_id and str(metadata.get("openwebui_chat_id", "") or "") == str(chat_id))
+            if require_file_match and not file_match:
+                continue
+            if not file_match and not chat_match:
+                continue
+
+            score = 3 if file_match else 1
+            timestamp = str((document or {}).get("updatedAt") or (document or {}).get("createdAt") or "")
+            if score > best_score or (score == best_score and timestamp > best_timestamp):
+                best_document_id = document_id
+                best_score = score
+                best_timestamp = timestamp
+
+        return best_document_id
+
+    def _resolve_document_id(
+        self,
+        document_id: str = "",
+        file_id: str = "",
+        __files__=None,
+        __chat_id__: Optional[str] = None,
+        __message_id__: Optional[str] = None,
+    ) -> str:
+        explicit = str(document_id or "").strip()
+        if self._is_document_id(explicit):
+            return explicit
+
+        direct_file_ids = self._direct_file_ids(file_id, __files__, __chat_id__, __message_id__)
+        state = self._load_state()
+        by_file = state.get("by_file", {}) if isinstance(state, dict) else {}
+        by_chat = state.get("by_chat", {}) if isinstance(state, dict) else {}
+
+        if direct_file_ids:
+            resolved = self._resolve_context(
+                chat_id=__chat_id__,
+                file_ids=direct_file_ids,
+                allow_chat_fallback=False,
+            )
+            if resolved:
+                self._bind_context(resolved, __chat_id__, __message_id__, direct_file_ids)
+                return resolved
+
+            for candidate in direct_file_ids:
+                cached_document_id = str((by_file.get(candidate, {}) or {}).get("document_id", "") or "").strip()
+                if self._is_document_id(cached_document_id):
+                    return cached_document_id
+
+            resolved = self._find_document_by_metadata(file_ids=direct_file_ids, require_file_match=True)
+            if resolved:
+                self._bind_context(resolved, __chat_id__, __message_id__, direct_file_ids)
+                return resolved
+
+            # A direct file in the current turn means a new upload should not silently fall back to an older chat document.
+            return ""
+
+        if __chat_id__:
+            resolved = self._resolve_context(chat_id=__chat_id__, allow_chat_fallback=True)
+            if resolved:
+                self._bind_context(resolved, __chat_id__, __message_id__, [])
+                return resolved
+
+            cached_document_id = str((by_chat.get(str(__chat_id__), {}) or {}).get("document_id", "") or "").strip()
+            if self._is_document_id(cached_document_id):
+                return cached_document_id
+
+            resolved = self._find_document_by_metadata(chat_id=__chat_id__)
+            if resolved:
+                self._bind_context(resolved, __chat_id__, __message_id__, [])
+                return resolved
+
+        return ""
+
+    def _decode_filename(self, value: str) -> str:
+        decoded = unquote(value or "")
+        return decoded if decoded else value
+
+    def _preferred_filename(self, file_model) -> str:
+        meta = getattr(file_model, "meta", {}) or {}
+        return self._decode_filename(meta.get("name") or getattr(file_model, "filename", "document.docx"))
 
     def _is_docx_file(self, file_model) -> bool:
         filename = (getattr(file_model, "filename", "") or "").lower()
@@ -532,20 +523,16 @@ class Tools:
         from open_webui.models.files import Files
 
         candidate_ids = self._candidate_file_ids(file_id, __files__, __chat_id__, __message_id__)
-
         seen = set()
         for candidate_id in candidate_ids:
             if not candidate_id or candidate_id in seen:
                 continue
             seen.add(candidate_id)
-
             file_model = Files.get_file_by_id(candidate_id)
             if file_model and self._is_docx_file(file_model):
                 return file_model
 
-        raise ValueError(
-            "No DOCX file found in the current chat context. Attach a .docx file or pass file_id explicitly."
-        )
+        raise ValueError("No DOCX file found in the current chat context. Attach a .docx file or pass file_id explicitly.")
 
     def _upload_to_superdoc(self, file_model, metadata: Optional[dict] = None):
         if not getattr(file_model, "path", None):
@@ -553,19 +540,14 @@ class Tools:
 
         filename = self._preferred_filename(file_model)
         payload = {"filename": filename}
-        if metadata and isinstance(metadata, dict):
+        if metadata:
             payload["metadata"] = json.dumps(metadata, ensure_ascii=False)
+
         with open(file_model.path, "rb") as handle:
             response = requests.post(
                 f"{self._internal_url()}/api/documents/upload",
                 data=payload,
-                files={
-                    "document": (
-                        filename,
-                        handle,
-                        DOCX_MIME,
-                    )
-                },
+                files={"document": (filename, handle, DOCX_MIME)},
                 timeout=self.valves.REQUEST_TIMEOUT_SECONDS,
             )
         response.raise_for_status()
@@ -581,54 +563,72 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Import the currently attached DOCX into SuperDoc and return the extracted text plus the viewer link.
-        Use this first when the user uploaded a DOCX and you need a stable `document_id` for later edits.
-        The imported document is bound to current chat context for follow-up edits.
+        Import the current DOCX attachment into SuperDoc, bind it to the active chat, and return text plus viewer URL.
+        Use this first when the user uploads a DOCX or asks to work on the attached document.
+        If this exact OpenWebUI file was already imported, the existing SuperDoc document is reused.
 
-        :param file_id: Optional OpenWebUI file UUID if you need a specific attachment
-        :param max_chars: Maximum extracted text characters to return (default 16000)
-        :return: JSON with document_id, filename, viewer_url, extracted_text
+        :param file_id: Optional OpenWebUI file UUID for a specific attachment
+        :param max_chars: Maximum extracted text characters to return
+        :return: JSON with document_id, filename, viewer_url, extracted_text, assistant_reply
         """
         emitter = EventEmitter(__event_emitter__)
         try:
-            try:
-                max_chars = max(int(max_chars), 1)
-            except (TypeError, ValueError):
-                max_chars = 16000
-            await emitter.status("Importing DOCX into SuperDoc...")
-            candidate_file_ids = self._operation_file_ids(file_id, __files__)
-            file_model = self._resolve_file_model(file_id, __files__, __chat_id__, __message_id__)
-            if getattr(file_model, "id", None):
-                candidate_file_ids.append(str(file_model.id))
-            upload_result = self._upload_to_superdoc(
-                file_model,
-                metadata=self._context_metadata(__chat_id__, __message_id__, candidate_file_ids),
+            max_chars = max(int(max_chars), 1)
+        except Exception:
+            max_chars = 16000
+
+        try:
+            await emitter.status("Opening DOCX in SuperDoc...")
+            direct_file_ids = self._direct_file_ids(file_id, __files__, __chat_id__, __message_id__)
+            document_id = self._resolve_document_id(
+                file_id=file_id,
+                __files__=__files__,
+                __chat_id__=__chat_id__,
+                __message_id__=__message_id__,
             )
-            document = upload_result.get("document", {})
-            document_id = document.get("id")
-            filename = self._preferred_filename(file_model)
+            filename = "document.docx"
+
+            if not document_id:
+                file_model = self._resolve_file_model(file_id, __files__, __chat_id__, __message_id__)
+                if getattr(file_model, "id", None):
+                    direct_file_ids.append(str(file_model.id))
+                direct_file_ids = self._normalize_file_ids(direct_file_ids)
+                filename = self._preferred_filename(file_model)
+                upload_result = self._upload_to_superdoc(
+                    file_model,
+                    metadata=self._context_metadata(__chat_id__, __message_id__, direct_file_ids),
+                )
+                document_id = upload_result.get("document", {}).get("id")
+                self._bind_context(document_id, __chat_id__, __message_id__, direct_file_ids)
+            else:
+                meta = self._request("GET", f"/api/documents/{document_id}").get("document", {})
+                filename = meta.get("filename", filename)
+                self._bind_context(document_id, __chat_id__, __message_id__, direct_file_ids)
+
             text_result = self._request("GET", f"/api/documents/{document_id}/text")
             text = str(text_result.get("text", "") or "")
             truncated = len(text) > max_chars
             extracted_text = text[:max_chars]
             viewer_url = self._viewer_url(document_id)
-            self._remember_document_binding(document_id, __chat_id__, candidate_file_ids)
+            assistant_reply = self._build_assistant_reply("Document opened in SuperDoc", filename, viewer_url)
 
             await emitter.citation(filename, viewer_url)
-            await emitter.status("Document imported into SuperDoc", done=True)
+            await self._refresh_open_artifact(emitter, viewer_url)
+            await emitter.status("Document opened in SuperDoc", done=True)
 
             return {
                 "success": True,
                 "document_id": document_id,
-                "file_id": file_model.id,
+                "file_ids": direct_file_ids,
                 "filename": filename,
                 "viewer_url": viewer_url,
                 "extracted_text": extracted_text,
                 "truncated": truncated,
-                "message": f"Document imported. [Open in SuperDoc Viewer]({viewer_url})",
+                "assistant_reply": assistant_reply,
+                "message": assistant_reply,
             }
         except Exception as exc:
-            await emitter.status(f"Failed to import document: {exc}", done=True)
+            await emitter.status(f"Failed to open document: {exc}", done=True)
             return {"success": False, "error": str(exc)}
 
     async def get_document_text(
@@ -643,37 +643,16 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Get a text window from a SuperDoc document.
-        Use this for large files to read the document in chunks before applying action-based edits.
-        If `document_id` is empty, tool tries to use active document bound to current chat/file context.
-
-        :param document_id: SuperDoc document UUID
-        :param file_id: Optional OpenWebUI file UUID for active-document lookup
-        :param offset: Character offset in extracted text (default 0)
-        :param max_chars: Maximum text characters to return (default 16000)
-        :return: JSON with filename, viewer_url, extracted_text window and pagination info
+        Read text from the active SuperDoc document. Use this before edits so you can target exact text.
+        If document_id is empty, the tool resolves the active chat document from SuperDoc's persistent context index.
         """
         emitter = EventEmitter(__event_emitter__)
         try:
-            active_document_id = self._resolve_document_id(
-                document_id=document_id,
-                file_id=file_id,
-                __files__=__files__,
-                __chat_id__=__chat_id__,
-                __message_id__=__message_id__,
-            )
+            active_document_id = self._resolve_document_id(document_id, file_id, __files__, __chat_id__, __message_id__)
             if not active_document_id:
-                raise ValueError(
-                    "No active SuperDoc document found. Attach a .docx once or pass document_id explicitly."
-                )
-            try:
-                max_chars = max(int(max_chars), 1)
-            except (TypeError, ValueError):
-                max_chars = 16000
-            try:
-                offset = max(int(offset), 0)
-            except (TypeError, ValueError):
-                offset = 0
+                raise ValueError("No active SuperDoc document found. Attach/open a .docx or pass document_id explicitly.")
+            max_chars = max(int(max_chars), 1)
+            offset = max(int(offset), 0)
             await emitter.status("Loading document text from SuperDoc...")
             result = self._request(
                 "GET",
@@ -681,16 +660,14 @@ class Tools:
                 params={"offset": offset, "max_chars": max_chars},
             )
             document = result.get("document", {})
-            text = str(result.get("text", "") or "")
-            viewer_url = self._viewer_url(active_document_id)
             await emitter.status("Document text loaded", done=True)
             return {
                 "success": True,
                 "document_id": active_document_id,
                 "filename": document.get("filename", "document.docx"),
-                "viewer_url": viewer_url,
-                "extracted_text": text,
-                "total_chars": int(result.get("total_chars", len(text))),
+                "viewer_url": self._viewer_url(active_document_id),
+                "extracted_text": str(result.get("text", "") or ""),
+                "total_chars": int(result.get("total_chars", 0)),
                 "offset": int(result.get("offset", offset)),
                 "max_chars": int(result.get("max_chars", max_chars)),
                 "truncated": bool(result.get("truncated", False)),
@@ -702,34 +679,37 @@ class Tools:
     async def list_documents(
         self,
         limit: int = 10,
+        only_current_chat: bool = True,
+        __chat_id__: Optional[str] = None,
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        List the most recent SuperDoc documents.
-        Use this when you need to recover a `document_id` from previous work in the same workspace.
-
-        :param limit: Maximum number of documents to return (default 10)
-        :return: JSON with recent document ids, filenames, and viewer links
+        List known SuperDoc documents. By default this returns documents bound to the current chat.
+        Use it when a chat contains multiple documents and you need to choose the correct document_id.
         """
         emitter = EventEmitter(__event_emitter__)
         try:
-            try:
-                limit = max(int(limit), 1)
-            except (TypeError, ValueError):
-                limit = 10
-            await emitter.status("Loading recent SuperDoc documents...")
-            result = self._request("GET", "/api/documents")
-            documents = result.get("documents", [])[:limit]
+            limit = max(int(limit), 1)
+            await emitter.status("Loading SuperDoc documents...")
+            if only_current_chat and __chat_id__:
+                result = self._request("GET", "/api/context/documents", params={"chat_id": __chat_id__, "limit": limit})
+                documents = result.get("documents", [])
+            else:
+                result = self._request("GET", "/api/documents", params={"limit": limit})
+                documents = result.get("documents", [])
             items = [
                 {
-                    "document_id": item.get("id"),
+                    "document_id": item.get("id") or item.get("document_id"),
                     "filename": item.get("filename"),
-                    "viewer_url": self._viewer_url(item.get("id")),
-                    "updated_at": item.get("updatedAt"),
+                    "viewer_url": self._viewer_url(item.get("id") or item.get("document_id")),
+                    "updated_at": item.get("updatedAt") or item.get("updated_at"),
+                    "active": bool(item.get("active", False)),
+                    "file_ids": ((item.get("context") or {}).get("file_ids") or []),
                 }
                 for item in documents
+                if item.get("id") or item.get("document_id")
             ]
-            await emitter.status("Recent documents loaded", done=True)
+            await emitter.status("SuperDoc documents loaded", done=True)
             return {"success": True, "documents": items, "count": len(items)}
         except Exception as exc:
             await emitter.status(f"Failed to list documents: {exc}", done=True)
@@ -749,52 +729,23 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Search within the extracted text of a SuperDoc document.
-        Use this before patching large documents so edits target exact fragments.
-        If `document_id` is empty, tool tries to use active document bound to current chat/file context.
-
-        :param document_id: SuperDoc document UUID
-        :param file_id: Optional OpenWebUI file UUID for active-document lookup
-        :param query: Text query to locate in the document
-        :param search_query: Backward-compatible alias for `query`
-        :param max_results: Maximum number of matches to return
-        :param context_chars: Context size around each match
-        :return: JSON with match positions and snippets
+        Search exact text in the active document. Use this before apply_document_actions for targeted edits.
         """
         emitter = EventEmitter(__event_emitter__)
         try:
-            active_document_id = self._resolve_document_id(
-                document_id=document_id,
-                file_id=file_id,
-                __files__=__files__,
-                __chat_id__=__chat_id__,
-                __message_id__=__message_id__,
-            )
+            active_document_id = self._resolve_document_id(document_id, file_id, __files__, __chat_id__, __message_id__)
             if not active_document_id:
-                raise ValueError(
-                    "No active SuperDoc document found. Attach a .docx once or pass document_id explicitly."
-                )
+                raise ValueError("No active SuperDoc document found. Attach/open a .docx or pass document_id explicitly.")
             query = str(query or search_query or "").strip()
             if not query:
                 raise ValueError("query is required")
-            try:
-                max_results = max(int(max_results), 1)
-            except (TypeError, ValueError):
-                max_results = 20
-            try:
-                context_chars = max(int(context_chars), 0)
-            except (TypeError, ValueError):
-                context_chars = 200
-
+            max_results = max(int(max_results), 1)
+            context_chars = max(int(context_chars), 0)
             await emitter.status("Searching document text in SuperDoc...")
             result = self._request(
                 "POST",
                 f"/api/documents/{active_document_id}/search-text",
-                json={
-                    "query": query,
-                    "max_results": max_results,
-                    "context_chars": context_chars,
-                },
+                json={"query": query, "max_results": max_results, "context_chars": context_chars},
             )
             await emitter.status("Document text search completed", done=True)
             return {
@@ -822,38 +773,35 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Apply structured action patches to an existing SuperDoc document.
-        Preferred editing path for large/complex documents:
-        `search_document_text` -> `get_document_text` (windowed) -> `apply_document_actions`.
-        If `document_id` is empty, tool tries to use active document bound to current chat/file context.
+        Apply structured tracked-change edits to the active document.
+        Preferred workflow: open_attached_document -> search_document_text/get_document_text -> apply_document_actions.
 
         Supported actions:
-        - {"type":"replace","find":"...","replace":"..."}
-        - {"type":"replaceAll","find":"...","replace":"..."}
-        - {"type":"insertContent","content":"<p>...</p>","position":"start|end"}
-
-        :param document_id: Existing SuperDoc document UUID
-        :param actions: List of action objects or JSON-encoded list
-        :param file_id: Optional OpenWebUI file UUID for active-document lookup
-        :param filename: Optional filename override
-        :param strict: If true, returns failure when zero actions are applied
-        :return: JSON with document_id, changes, viewer_url, and assistant reply
-                 (summary + link, plus optional Artifact HTML iframe block when enabled)
+        - {"type":"replace","find":"exact text","replace":"new text"}
+        - {"type":"replaceAll","find":"exact text","replace":"new text"}
+        - {"type":"delete","find":"exact text"}
+        - {"type":"insertContent","content":"<p>text</p>","position":"start|end"}
         """
         emitter = EventEmitter(__event_emitter__)
         try:
-            active_document_id = self._resolve_document_id(
-                document_id=document_id,
-                file_id=file_id,
-                __files__=__files__,
-                __chat_id__=__chat_id__,
-                __message_id__=__message_id__,
-            )
-            if not active_document_id:
-                raise ValueError(
-                    "No active SuperDoc document found. Attach a .docx once or pass document_id explicitly."
+            active_document_id = self._resolve_document_id(document_id, file_id, __files__, __chat_id__, __message_id__)
+            direct_file_ids = self._direct_file_ids(file_id, __files__, __chat_id__, __message_id__)
+
+            if not active_document_id and direct_file_ids:
+                file_model = self._resolve_file_model(file_id, __files__, __chat_id__, __message_id__)
+                if getattr(file_model, "id", None):
+                    direct_file_ids.append(str(file_model.id))
+                direct_file_ids = self._normalize_file_ids(direct_file_ids)
+                upload_result = self._upload_to_superdoc(
+                    file_model,
+                    metadata=self._context_metadata(__chat_id__, __message_id__, direct_file_ids),
                 )
-            candidate_file_ids = self._operation_file_ids(file_id, __files__)
+                active_document_id = upload_result.get("document", {}).get("id")
+                self._bind_context(active_document_id, __chat_id__, __message_id__, direct_file_ids)
+
+            if not active_document_id:
+                raise ValueError("No active SuperDoc document found. Attach/open a .docx or pass document_id explicitly.")
+
             parsed_actions = actions
             if parsed_actions is None:
                 raise ValueError("actions is required")
@@ -861,39 +809,29 @@ class Tools:
                 parsed_actions = json.loads(parsed_actions)
             if not isinstance(parsed_actions, list):
                 raise ValueError("actions must be a list or JSON-encoded list")
-            strict_value = (
-                strict
-                if isinstance(strict, bool)
-                else str(strict or "").strip().lower() not in {"", "0", "false", "no", "off"}
-            )
 
-            await emitter.status("Applying action patches in SuperDoc...")
+            strict_value = strict if isinstance(strict, bool) else str(strict or "").strip().lower() not in {"", "0", "false", "no", "off"}
+            await emitter.status("Applying tracked changes in SuperDoc...")
             result = self._request(
                 "POST",
                 f"/api/documents/{active_document_id}/apply-actions",
                 json={
                     "actions": parsed_actions,
                     **({"filename": filename} if filename else {}),
-                    "metadata": self._context_metadata(__chat_id__, __message_id__, candidate_file_ids),
+                    "metadata": self._context_metadata(__chat_id__, __message_id__, direct_file_ids),
                     "strict": strict_value,
                 },
             )
-
             document = result.get("document", {})
             final_filename = document.get("filename", filename or "document.docx")
             viewer_url = self._viewer_url(active_document_id)
             changes = result.get("changes", {}) or {}
-            assistant_reply = self._build_assistant_reply(
-                "Document patched in SuperDoc",
-                final_filename,
-                viewer_url,
-            )
-            self._remember_document_binding(active_document_id, __chat_id__, candidate_file_ids)
+            self._bind_context(active_document_id, __chat_id__, __message_id__, direct_file_ids)
+            assistant_reply = self._build_assistant_reply("Document patched in SuperDoc", final_filename, viewer_url)
 
             await emitter.citation(final_filename, viewer_url)
             await self._refresh_open_artifact(emitter, viewer_url)
-            await emitter.status("Action patches applied in SuperDoc", done=True)
-
+            await emitter.status("Tracked changes applied in SuperDoc", done=True)
             return {
                 "success": True,
                 "document_id": active_document_id,
@@ -908,59 +846,43 @@ class Tools:
                 "message": assistant_reply,
             }
         except Exception as exc:
-            await emitter.status(f"Failed to apply action patches: {exc}", done=True)
+            await emitter.status(f"Failed to apply tracked changes: {exc}", done=True)
             return {"success": False, "error": str(exc)}
 
     async def create_document(
         self,
         document_html: str,
         filename: str = "ai_generated_document.docx",
-        file_id: str = "",
-        __files__=None,
         __chat_id__: Optional[str] = None,
         __message_id__: Optional[str] = None,
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Create a new DOCX in SuperDoc from the final document HTML.
-        Call this only after you have already drafted the complete document content.
-        Do not pass the user's request here; pass the final HTML or text that should become the document.
-        Chat output must stay concise: short status + viewer URL.
-        When Artifact embedding is enabled, assistant_reply also includes an HTML iframe code block.
-
-        :param document_html: Final document content as valid HTML (preferred) or plain text
-        :param filename: Output DOCX filename
-        :return: JSON with document_id, viewer_url, and `assistant_reply`
-                 (summary + link, plus optional Artifact HTML iframe block)
+        Create a new DOCX in SuperDoc from final HTML/text drafted by the main OpenWebUI model.
+        Do not pass the user's raw prompt here. Pass the final document content.
         """
         emitter = EventEmitter(__event_emitter__)
         try:
             await emitter.status("Creating document in SuperDoc...")
-            candidate_file_ids = self._operation_file_ids(file_id, __files__)
             result = self._request(
                 "POST",
                 "/api/documents/create-from-html",
                 json={
                     "html": document_html,
                     "filename": filename,
-                    "metadata": self._context_metadata(__chat_id__, __message_id__, candidate_file_ids),
+                    "metadata": self._context_metadata(__chat_id__, __message_id__, []),
                 },
             )
             document = result.get("document", {})
             document_id = document.get("id")
-            viewer_url = self._viewer_url(document_id)
             final_filename = document.get("filename", filename)
-            self._remember_document_binding(document_id, __chat_id__, candidate_file_ids)
-            assistant_reply = self._build_assistant_reply(
-                "Document created in SuperDoc",
-                final_filename,
-                viewer_url,
-            )
+            viewer_url = self._viewer_url(document_id)
+            self._bind_context(document_id, __chat_id__, __message_id__, [])
+            assistant_reply = self._build_assistant_reply("Document created in SuperDoc", final_filename, viewer_url)
 
             await emitter.citation(final_filename, viewer_url)
             await self._refresh_open_artifact(emitter, viewer_url)
             await emitter.status("Document created in SuperDoc", done=True)
-
             return {
                 "success": True,
                 "document_id": document_id,
@@ -985,47 +907,27 @@ class Tools:
         __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     ) -> dict:
         """
-        Fallback full-document rewrite for explicit "rewrite/replace entire document" requests.
-        If `document_id` is empty, the tool first tries active document bound to current chat.
-        If no active document is found, it imports attached DOCX from the current chat.
-        For normal targeted edits, use:
-        `search_document_text` -> `get_document_text` (windowed) -> `apply_document_actions`.
-        Chat output must stay concise: short status + viewer URL.
-        When Artifact embedding is enabled, assistant_reply also includes an HTML iframe code block.
-
-        :param document_html: Final edited document content as valid HTML (preferred) or plain text
-        :param document_id: Existing SuperDoc document UUID. Leave empty to use the current attached DOCX.
-        :param file_id: Optional OpenWebUI file UUID if you need a specific attachment
-        :param filename: Optional filename override for the updated DOCX
-        :return: JSON with document_id, viewer_url, and `assistant_reply`
-                 (summary + link, plus optional Artifact HTML iframe block)
+        Replace the entire active document with final HTML/text and preserve old/new content as Track Changes.
+        For targeted edits, prefer apply_document_actions. Use this for rewrite/replace-entire-document requests.
         """
         emitter = EventEmitter(__event_emitter__)
         try:
             await emitter.status("Updating document in SuperDoc...")
-
-            candidate_file_ids = self._operation_file_ids(file_id, __files__)
-            active_document_id = self._resolve_document_id(
-                document_id=document_id,
-                file_id=file_id,
-                __files__=__files__,
-                __chat_id__=__chat_id__,
-                __message_id__=__message_id__,
-            )
+            direct_file_ids = self._direct_file_ids(file_id, __files__, __chat_id__, __message_id__)
+            active_document_id = self._resolve_document_id(document_id, file_id, __files__, __chat_id__, __message_id__)
             active_filename = filename
 
             if not active_document_id:
                 file_model = self._resolve_file_model(file_id, __files__, __chat_id__, __message_id__)
                 if getattr(file_model, "id", None):
-                    candidate_file_ids.append(str(file_model.id))
+                    direct_file_ids.append(str(file_model.id))
+                direct_file_ids = self._normalize_file_ids(direct_file_ids)
                 upload_result = self._upload_to_superdoc(
                     file_model,
-                    metadata=self._context_metadata(__chat_id__, __message_id__, candidate_file_ids),
+                    metadata=self._context_metadata(__chat_id__, __message_id__, direct_file_ids),
                 )
                 active_document_id = upload_result.get("document", {}).get("id")
-                if not active_filename:
-                    active_filename = self._preferred_filename(file_model)
-                self._remember_document_binding(active_document_id, __chat_id__, candidate_file_ids)
+                active_filename = active_filename or self._preferred_filename(file_model)
 
             result = self._request(
                 "POST",
@@ -1033,23 +935,18 @@ class Tools:
                 json={
                     "html": document_html,
                     **({"filename": active_filename} if active_filename else {}),
-                    "metadata": self._context_metadata(__chat_id__, __message_id__, candidate_file_ids),
+                    "metadata": self._context_metadata(__chat_id__, __message_id__, direct_file_ids),
                 },
             )
             document = result.get("document", {})
             final_filename = document.get("filename", active_filename or "document.docx")
             viewer_url = self._viewer_url(active_document_id)
-            self._remember_document_binding(active_document_id, __chat_id__, candidate_file_ids)
-            assistant_reply = self._build_assistant_reply(
-                "Document updated in SuperDoc",
-                final_filename,
-                viewer_url,
-            )
+            self._bind_context(active_document_id, __chat_id__, __message_id__, direct_file_ids)
+            assistant_reply = self._build_assistant_reply("Document updated in SuperDoc", final_filename, viewer_url)
 
             await emitter.citation(final_filename, viewer_url)
             await self._refresh_open_artifact(emitter, viewer_url)
             await emitter.status("Document updated in SuperDoc", done=True)
-
             return {
                 "success": True,
                 "document_id": active_document_id,

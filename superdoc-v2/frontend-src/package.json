@@ -1,0 +1,26 @@
+{
+  "name": "opsup-superdoc-viewer",
+  "private": true,
+  "version": "1.0.0-alpha.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "superdoc": "^1.35.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}
