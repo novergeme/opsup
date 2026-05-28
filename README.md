@@ -6,7 +6,7 @@ The goal is simple: a user can upload a Word document in OpenWebUI or ask the mo
 
 Watch the video review:
 
-https://github.com/user-attachments/assets/00f6e3cd-d860-45ee-b3ca-b0eef0975e82
+https://github.com/user-attachments/assets/51ef6548-05f1-4e6d-b06b-911a084bb8c5
 
 
 
