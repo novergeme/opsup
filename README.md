@@ -4,6 +4,14 @@ First public alpha of an OpenWebUI AI Tool that opens, creates, and edits `.docx
 
 The goal is simple: a user can upload a Word document in OpenWebUI or ask the model to create one, then continue editing it in a SuperDoc Artifact. AI edits are written back into the DOCX with SuperDoc Track Changes, so additions and deletions stay reviewable.
 
+Watch the video review:
+
+https://github.com/user-attachments/assets/00f6e3cd-d860-45ee-b3ca-b0eef0975e82
+
+
+
+
+
 ## Status
 
 This is an alpha release. It is meant to be usable and understandable, not perfect. The core flow is stable enough to test:
